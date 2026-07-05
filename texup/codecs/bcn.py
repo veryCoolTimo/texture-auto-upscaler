@@ -39,8 +39,18 @@ def encode_bcn(rgba: np.ndarray, fmt: str) -> bytes:
         padded[:h, :w] = rgba
         padded[h:, :w] = rgba[h - 1 :, :]
         padded[:, w:] = padded[:, w - 1 : w]
-        rgba = padded
-    surf = itc.RGBASurface(rgba.tobytes(), pw, ph, stride=pw * 4)
+        rgba_padded = padded
+    else:
+        rgba_padded = rgba
+
+    # BC5 требует 2-byte-per-pixel RG поверхность (stride = width*2)
+    if fmt == "BC5":
+        rg = np.ascontiguousarray(rgba_padded[..., :2])  # (h, w, 2) interleaved RG
+        surf = itc.RGBASurface(rg.tobytes(), pw, ph, stride=pw * 2)
+    else:
+        # DXT1/DXT5 используют RGBA поверхность (stride = width*4)
+        surf = itc.RGBASurface(rgba_padded.tobytes(), pw, ph, stride=pw * 4)
+
     encoders = {
         "DXT1": itc.compress_blocks_bc1,
         "DXT5": itc.compress_blocks_bc3,
