@@ -17,3 +17,7 @@ register(DdsCodec())
 from texup.codecs.mtframework import MtfTexCodec  # noqa: E402
 
 register(MtfTexCodec())
+
+from texup.codecs.mtframework import MtfArcCodec  # noqa: E402
+
+register(MtfArcCodec())
