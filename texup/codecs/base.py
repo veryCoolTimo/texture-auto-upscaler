@@ -11,7 +11,7 @@ class UnsupportedTexture(Exception):
     """Codec recognizes the file but this variant is not supported."""
 
 
-@dataclass
+@dataclass(eq=False)
 class TextureItem:
     source_path: Path
     inner_path: str | None
