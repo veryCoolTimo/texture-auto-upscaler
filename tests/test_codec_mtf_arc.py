@@ -74,6 +74,18 @@ def test_arc_data_start_gap(tmp_path):
     assert MtfArcCodec().encode_file(p, {}) == blob
 
 
+def test_arc_repack_with_duplicate_names(tmp_path):
+    entries = [
+        ("shared\\name", ARC_TEXTURE_HASH, b"texture-payload-AAAA"),
+        ("shared\\name", 0x60DD1B16, b"message-payload-BB"),
+    ]
+    blob = build_arc(7, entries)
+    p = tmp_path / "dup.arc"
+    p.write_bytes(blob)
+    codec = MtfArcCodec()
+    assert codec.encode_file(p, {}) == blob
+
+
 @pytest.mark.skipif(not RE5, reason="TEXUP_RE5_DIR not set")
 def test_real_arc_repack_identical():
     import glob

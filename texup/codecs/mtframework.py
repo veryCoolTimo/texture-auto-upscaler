@@ -132,13 +132,13 @@ def parse_arc(data: bytes) -> tuple[int, list[ArcEntry]]:
 
 
 def build_arc(version: int, entries: list[tuple[str, int, bytes]],
-              quality: dict[str, int] | None = None,
-              precompressed: dict[str, bytes] | None = None,
-              uncomp_sizes: dict[str, int] | None = None,
+              quality: dict[int, int] | None = None,
+              precompressed: dict[int, bytes] | None = None,
+              uncomp_sizes: dict[int, int] | None = None,
               data_start: int | None = None) -> bytes:
-    """entries: (name, type_hash, raw_bytes). precompressed[name] — готовый zlib-поток
+    """entries: (name, type_hash, raw_bytes). precompressed[i] — готовый zlib-поток
     (для нетронутых энтри, чтобы репак был байт-идентичным); для таких энтри raw_bytes
-    пустые, а несжатый размер берётся из uncomp_sizes[name].
+    пустые, а несжатый размер берётся из uncomp_sizes[i].
 
     data_start: реальные архивы RE5 резервируют зануленную область перед первым
     блоком данных (первый offset обычно 32768 или 65536, а не сразу после
@@ -148,17 +148,17 @@ def build_arc(version: int, entries: list[tuple[str, int, bytes]],
     precompressed = precompressed or {}
     uncomp_sizes = uncomp_sizes or {}
     blobs = []
-    for name, type_hash, raw in entries:
+    for i, (name, type_hash, raw) in enumerate(entries):
         if len(name.encode("ascii")) >= 64:
             raise ValueError(f"entry name too long: {name!r}")
-        comp = precompressed.get(name) or zlib.compress(raw, 9)
-        blobs.append((name, type_hash, comp, uncomp_sizes.get(name, len(raw))))
+        comp = precompressed.get(i) or zlib.compress(raw, 9)
+        blobs.append((name, type_hash, comp, uncomp_sizes.get(i, len(raw))))
     header_size = 8 + len(blobs) * 80
     pos = max(header_size, data_start) if data_start else header_size
     out = struct.pack("<IHH", ARC_MAGIC, version, len(blobs))
     start_pos = pos
-    for name, type_hash, comp, usize in blobs:
-        flags = (usize & 0x1FFFFFFF) | ((quality.get(name, 2) & 0x7) << 29)
+    for i, (name, type_hash, comp, usize) in enumerate(blobs):
+        flags = (usize & 0x1FFFFFFF) | ((quality.get(i, 2) & 0x7) << 29)
         out += name.encode("ascii").ljust(64, b"\x00")
         out += struct.pack("<IIII", type_hash, len(comp), flags, pos)
         pos += len(comp)
@@ -200,16 +200,16 @@ class MtfArcCodec:
         version, entries = parse_arc(data)
 
         out_entries, quality, precompressed, uncomp_sizes = [], {}, {}, {}
-        for e in entries:
+        for i, e in enumerate(entries):
             comp = data[e.offset : e.offset + e.comp_size]
-            quality[e.name] = e.quality
-            if e.name in replacements:
+            quality[i] = e.quality
+            if e.type_hash == ARC_TEXTURE_HASH and e.name in replacements:
                 raw = zlib.decompress(comp)
                 new_raw = build_tex(parse_tex(raw), replacements[e.name])
                 out_entries.append((e.name, e.type_hash, new_raw))
             else:
                 out_entries.append((e.name, e.type_hash, b""))
-                precompressed[e.name] = comp
-                uncomp_sizes[e.name] = e.uncomp_size
+                precompressed[i] = comp
+                uncomp_sizes[i] = e.uncomp_size
         data_start = min((e.offset for e in entries), default=None)
         return build_arc(version, out_entries, quality, precompressed, uncomp_sizes, data_start=data_start)
