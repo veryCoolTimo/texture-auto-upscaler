@@ -36,3 +36,6 @@ tests/fixtures/games/
 # Local env/secrets
 .env
 .env.*
+
+# SDD scratch
+.superpowers/
