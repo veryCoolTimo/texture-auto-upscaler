@@ -10,7 +10,6 @@ from PIL import Image
 
 from texup.codecs import get_codec
 from texup.engine import Upscaler, load_upscaler
-from texup.models import MODELS
 from texup.project import Project
 from texup.router import resize_classic, route_for
 
@@ -82,9 +81,9 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                     up = engines[route.model].run(px, max_size=max_size)
                 if route.post:
                     up = route.post(up)
-                replacements[inner] = up
                 if compare:
                     _write_compare(out_dir, r["klass"], r["key"], item.pixels, up)
+                replacements[inner] = up
                 prj.set_status(r["key"], "done", model=route.model)
                 stats["done"] += 1
             except Exception as e:  # noqa: BLE001

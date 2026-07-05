@@ -51,7 +51,6 @@ def upscale(
 @app.command()
 def preview(texture: Path, max_size: int = 4096):
     """Upscale a single texture file, write before/after PNGs next to it."""
-    import numpy as np
     from PIL import Image
 
     from texup.classify import classify

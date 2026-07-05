@@ -66,3 +66,20 @@ def test_error_marks_failed_and_continues(tmp_path):
     stats = process(prj, out, engine_factory=fake_factory)
     assert stats["failed"] == 1
     assert stats["done"] == 3
+
+
+def test_encode_failure_rolls_back_done_records(tmp_path, monkeypatch):
+    game = _game(tmp_path, n_diffuse=2)
+    out = tmp_path / "out"
+    prj = scan_game(game, out)
+
+    from texup.codecs import get_codec
+    codec = get_codec("standard")
+    monkeypatch.setattr(
+        type(codec), "encode_file",
+        lambda self, path, repl: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+    stats = process(prj, out, engine_factory=fake_factory)
+    assert stats["done"] == 0
+    assert stats["failed"] == 3
+    assert all(r["status"] == "failed" for r in prj.records())
