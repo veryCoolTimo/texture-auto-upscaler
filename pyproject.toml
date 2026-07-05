@@ -1,0 +1,30 @@
+[project]
+name = "texup"
+version = "0.1.0"
+description = "Auto-remaster game textures: scan, classify, upscale, repack"
+requires-python = ">=3.11"
+dependencies = [
+    "typer>=0.12",
+    "numpy>=1.26",
+    "pillow>=10.3",
+    "torch>=2.3",
+    "spandrel>=0.4",
+    "ispc_texcomp>=1.0.1",
+    "texture2ddecoder>=1.0.5",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+texup = "texup.cli:app"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["texup", "texup.codecs"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
