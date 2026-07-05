@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from texup.codecs.base import TextureItem
+from texup.codecs.base import TextureItem, UnsupportedTexture
 
 _EXTS = {".png": "PNG", ".jpg": "JPEG", ".jpeg": "JPEG", ".tga": "TGA", ".bmp": "BMP"}
 
@@ -27,7 +27,11 @@ class StandardCodec:
         rgba = replacements[""]
         fmt = _EXTS[path.suffix.lower()]
         img = Image.fromarray(rgba, "RGBA")
-        if fmt == "JPEG":
+        if fmt == "BMP":
+            if (rgba[..., 3] != 255).any():
+                raise UnsupportedTexture("BMP encode would lose alpha channel")
+            img = img.convert("RGB")
+        elif fmt == "JPEG":
             img = img.convert("RGB")
         buf = io.BytesIO()
         img.save(buf, format=fmt, quality=95)

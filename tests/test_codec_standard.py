@@ -45,3 +45,25 @@ def test_encode_jpeg_no_alpha(tmp_path):
     assert items[0].pixels.shape == (6, 6, 4)
     out = codec.encode_file(p, {"": items[0].pixels})
     assert out[:2] == b"\xff\xd8"  # JPEG SOI
+
+
+def test_encode_bmp_with_alpha_raises(tmp_path):
+    import pytest
+    from texup.codecs.base import UnsupportedTexture
+
+    p = tmp_path / "t.bmp"
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(p)
+    codec = find_codec(p)
+    rgba = np.full((4, 4, 4), 128, dtype=np.uint8)  # alpha 128
+    with pytest.raises(UnsupportedTexture):
+        codec.encode_file(p, {"": rgba})
+
+
+def test_encode_bmp_opaque_ok(tmp_path):
+    p = tmp_path / "t.bmp"
+    Image.new("RGB", (4, 4), (1, 2, 3)).save(p)
+    codec = find_codec(p)
+    rgba = np.zeros((4, 4, 4), dtype=np.uint8)
+    rgba[..., 3] = 255
+    out = codec.encode_file(p, {"": rgba})
+    assert out[:2] == b"BM"
