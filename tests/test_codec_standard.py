@@ -1,3 +1,4 @@
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -23,6 +24,7 @@ def test_decode_png(tmp_path):
     assert item.pixels.shape == (8, 6, 4)
     assert np.array_equal(item.pixels, rgba)
     assert item.meta["format"] == "PNG"
+    assert item.meta["content_sha"] == hashlib.sha256(p.read_bytes()).hexdigest()
     assert item.inner_path is None
 
 

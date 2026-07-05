@@ -30,6 +30,8 @@ def test_rgba8_lossless_roundtrip(tmp_path):
     p.write_bytes(blob)
     items = MtfTexCodec().decode(p)
     assert np.array_equal(items[0].pixels, rgba)
+    import hashlib
+    assert items[0].meta["content_sha"] == hashlib.sha256(blob).hexdigest()
 
 
 def test_encode_file_upscale_recomputes_mips(tmp_path):

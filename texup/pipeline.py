@@ -29,11 +29,16 @@ def _write_compare(out_dir: Path, klass: str, key: str, before: np.ndarray, afte
     Image.fromarray(canvas, "RGBA").save(dst)
 
 
+def _cache_path(cache_dir: Path, content_sha: str, model: str | None, max_size: int) -> Path:
+    return cache_dir / f"{content_sha}-{model or 'classic'}-{max_size}.png"
+
+
 def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
             sample: int | None = None, max_size: int = 4096,
             engine_factory: Callable[[str], Upscaler] = load_upscaler,
             compare: bool = False) -> dict:
     out_dir = Path(out_dir)
+    cache_dir = out_dir / "_upcache"
     pending = prj.records(status="pending")
     if only:
         pending = [r for r in pending if r["klass"] in only]
@@ -70,17 +75,28 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
             try:
                 item = items[inner]
                 route = route_for(r["klass"], item)
-                px = item.pixels
-                if route.pre:
-                    px = route.pre(px)
-                if route.model is None:
-                    up = resize_classic(px, 4)
+                content_sha = item.meta.get("content_sha")
+                cache_file = (
+                    _cache_path(cache_dir, content_sha, route.model, max_size)
+                    if content_sha else None
+                )
+                if cache_file is not None and cache_file.exists():
+                    up = np.asarray(Image.open(cache_file).convert("RGBA"))
                 else:
-                    if route.model not in engines:
-                        engines[route.model] = engine_factory(route.model)
-                    up = engines[route.model].run(px, max_size=max_size)
-                if route.post:
-                    up = route.post(up)
+                    px = item.pixels
+                    if route.pre:
+                        px = route.pre(px)
+                    if route.model is None:
+                        up = resize_classic(px, 4)
+                    else:
+                        if route.model not in engines:
+                            engines[route.model] = engine_factory(route.model)
+                        up = engines[route.model].run(px, max_size=max_size)
+                    if route.post:
+                        up = route.post(up)
+                    if cache_file is not None:
+                        cache_file.parent.mkdir(parents=True, exist_ok=True)
+                        Image.fromarray(up, "RGBA").save(cache_file)
                 if compare:
                     _write_compare(out_dir, r["klass"], r["key"], item.pixels, up)
                 replacements[inner] = up

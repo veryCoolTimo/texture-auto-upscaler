@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import struct
 import zlib
 from dataclasses import dataclass
@@ -91,7 +92,10 @@ class MtfTexCodec:
         data = path.read_bytes()
         info = parse_tex(data)
         rgba = tex_pixels(data, info)
-        meta = {"format": info.fmt, "mip_count": info.mip_count, "tex": True}
+        meta = {
+            "format": info.fmt, "mip_count": info.mip_count, "tex": True,
+            "content_sha": hashlib.sha256(data).hexdigest(),
+        }
         return [TextureItem(path, None, self.name, rgba, meta)]
 
     def encode_file(self, path: Path, replacements: dict[str, np.ndarray]) -> bytes:
@@ -185,13 +189,19 @@ class MtfArcCodec:
         for e in entries:
             if e.type_hash != ARC_TEXTURE_HASH:
                 continue
-            raw = zlib.decompress(data[e.offset : e.offset + e.comp_size])
+            comp_blob = data[e.offset : e.offset + e.comp_size]
+            raw = zlib.decompress(comp_blob)
             try:
                 info = parse_tex(raw)
             except UnsupportedTexture:
                 continue  # кубмапы и прочее — пропуск
             rgba = tex_pixels(raw, info)
-            meta = {"format": info.fmt, "mip_count": info.mip_count, "tex": True, "arc_entry": e.name}
+            meta = {
+                "format": info.fmt, "mip_count": info.mip_count, "tex": True, "arc_entry": e.name,
+                # sha256 of the COMPRESSED entry blob (cheap, unique per content, avoids
+                # paying for zlib.decompress just to hash the raw bytes).
+                "content_sha": hashlib.sha256(comp_blob).hexdigest(),
+            }
             items.append(TextureItem(path, e.name, self.name, rgba, meta))
         return items
 

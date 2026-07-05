@@ -53,7 +53,7 @@ def apply_to_game(out_dir: Path, *, force: bool = False) -> dict:
         if not new_file.is_file():
             continue
         rel = new_file.relative_to(out_dir)
-        if rel.parts[0] in ("_compare",) or rel.name == "texup-project.json" \
+        if rel.parts[0] in ("_compare", "_upcache") or rel.name == "texup-project.json" \
                 or rel.name.endswith(".json.bak"):
             continue
         target = game_dir / rel

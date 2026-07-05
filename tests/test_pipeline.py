@@ -68,6 +68,39 @@ def test_error_marks_failed_and_continues(tmp_path):
     assert stats["done"] == 3
 
 
+def test_dedupe_cache_skips_duplicate_content(tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    rgba = np.random.default_rng(0).integers(0, 255, (8, 8, 4), dtype=np.uint8)
+    rgba[..., 3] = 255
+    Image.fromarray(rgba, "RGBA").save(game / "tex0_d.png")
+    Image.fromarray(rgba, "RGBA").save(game / "tex1_d.png")  # same content, different name
+    out = tmp_path / "out"
+    prj = scan_game(game, out)
+
+    run_calls = {"n": 0}
+    real = fake_factory("remacri")
+
+    class CountingUpscaler:
+        def run(self, rgba, max_size=4096):
+            run_calls["n"] += 1
+            return real.run(rgba, max_size=max_size)
+
+    def counting_factory(model_name: str):
+        return CountingUpscaler()
+
+    stats = process(prj, out, engine_factory=counting_factory)
+    assert stats["done"] == 2
+    assert run_calls["n"] == 1  # only ONE of the two duplicates actually ran inference
+
+    a = np.asarray(Image.open(out / "tex0_d.png"))
+    b = np.asarray(Image.open(out / "tex1_d.png"))
+    assert a.shape == (32, 32, 4)
+    assert np.array_equal(a, b)
+    assert (out / "_upcache").is_dir()
+    assert len(list((out / "_upcache").glob("*.png"))) == 1
+
+
 def test_encode_failure_rolls_back_done_records(tmp_path, monkeypatch):
     game = _game(tmp_path, n_diffuse=2)
     out = tmp_path / "out"

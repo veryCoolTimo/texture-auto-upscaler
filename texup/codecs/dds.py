@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import struct
 from pathlib import Path
 
@@ -58,7 +59,7 @@ class DdsCodec:
         data = path.read_bytes()
         w, h, mips, fmt, off = self._parse(data)
         rgba = decode_bcn(data[off : off + bcn_size(w, h, fmt)], w, h, fmt)
-        meta = {"format": fmt, "mip_count": mips}
+        meta = {"format": fmt, "mip_count": mips, "content_sha": hashlib.sha256(data).hexdigest()}
         return [TextureItem(path, None, self.name, rgba, meta)]
 
     def build_dds(self, rgba: np.ndarray, fmt: str, mip_count: int) -> bytes:

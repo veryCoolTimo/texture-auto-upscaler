@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 from pathlib import Path
 
@@ -18,10 +19,12 @@ class StandardCodec:
         return path.suffix.lower() in _EXTS
 
     def decode(self, path: Path) -> list[TextureItem]:
-        with Image.open(path) as img:
+        data = path.read_bytes()
+        with Image.open(io.BytesIO(data)) as img:
             fmt = img.format or _EXTS[path.suffix.lower()]
             rgba = np.asarray(img.convert("RGBA"))
-        return [TextureItem(path, None, self.name, rgba, {"format": fmt})]
+        content_sha = hashlib.sha256(data).hexdigest()
+        return [TextureItem(path, None, self.name, rgba, {"format": fmt, "content_sha": content_sha})]
 
     def encode_file(self, path: Path, replacements: dict[str, np.ndarray]) -> bytes:
         rgba = replacements[""]

@@ -1,3 +1,4 @@
+import hashlib
 import struct
 
 import numpy as np
@@ -68,7 +69,9 @@ def test_dds_roundtrip(tmp_path):
     assert len(items) == 1
     it = items[0]
     assert (it.width, it.height) == (32, 16)
-    assert it.meta == {"format": "DXT5", "mip_count": 6}
+    assert it.meta["format"] == "DXT5"
+    assert it.meta["mip_count"] == 6
+    assert it.meta["content_sha"] == hashlib.sha256(p.read_bytes()).hexdigest()
 
     new = _gradient(64, 32)
     out = codec.encode_file(p, {"": new})

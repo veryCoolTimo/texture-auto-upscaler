@@ -20,6 +20,14 @@ class Upscaler:
         self.scale = scale
         self.tile_size = 512
         self.tile_overlap = 16
+        # fp16 speeds up MPS inference substantially; CPU/CUDA keep fp32 behavior.
+        self.use_fp16 = False
+        if self.device == "mps":
+            try:
+                self.model = self.model.half()
+                self.use_fp16 = True
+            except Exception:  # noqa: BLE001 — model doesn't support half precision
+                self.use_fp16 = False
 
     @torch.inference_mode()
     def _run_rgb(self, rgb: np.ndarray) -> np.ndarray:
@@ -53,20 +61,38 @@ class Upscaler:
                 elif self.device == "cuda":
                     torch.cuda.empty_cache()
 
-    def _infer(self, rgb: np.ndarray) -> np.ndarray:
-        t = torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(2, 0, 1)[None].to(self.device)
+    def _forward(self, rgb: np.ndarray, fp16: bool) -> np.ndarray:
+        dtype = torch.float16 if fp16 else torch.float32
+        t = torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(2, 0, 1)[None].to(
+            self.device, dtype=dtype
+        )
         out = self.model(t)
-        out = out.clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
+        return out.float().clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
+
+    def _infer(self, rgb: np.ndarray) -> np.ndarray:
+        out = self._forward(rgb, self.use_fp16)
+        if self.use_fp16:
+            input_was_zero = not np.any(rgb)
+            degenerate = np.isnan(out).any() or (not input_was_zero and not np.any(out))
+            if degenerate:
+                # fp16 produced garbage on this hardware/model combo — fall back to fp32
+                # permanently for the rest of this Upscaler's lifetime, and redo this tile.
+                self.model = self.model.float()
+                self.use_fp16 = False
+                out = self._forward(rgb, False)
         return (out * 255.0 + 0.5).astype(np.uint8)
 
     def run(self, rgba: np.ndarray, max_size: int = 4096) -> np.ndarray:
         rgb_up = self._run_rgb(rgba[..., :3])
         alpha = rgba[..., 3]
+        h, w = rgb_up.shape[:2]
         if np.all(alpha == alpha.flat[0]):
-            a_up = np.full(rgb_up.shape[:2], alpha.flat[0], dtype=np.uint8)
+            a_up = np.full((h, w), alpha.flat[0], dtype=np.uint8)
         else:
-            a3 = np.repeat(alpha[..., None], 3, axis=2)
-            a_up = self._run_rgb(a3)[..., 0]
+            # Alpha is structural (e.g. cutout masks), not photographic detail — a Lanczos
+            # resize is visually indistinguishable from a second neural pass here and much
+            # cheaper (skips a full model inference per texture).
+            a_up = np.asarray(Image.fromarray(alpha, "L").resize((w, h), Image.LANCZOS))
         out = np.dstack([rgb_up, a_up])
         h, w = out.shape[:2]
         long_side = max(h, w)

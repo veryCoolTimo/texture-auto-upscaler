@@ -1,3 +1,4 @@
+import hashlib
 import os
 import struct
 import zlib
@@ -35,6 +36,27 @@ def test_arc_decode_finds_textures(tmp_path):
     assert len(items) == 1  # только rTexture
     assert items[0].inner_path == "model\\body"
     assert items[0].pixels.shape == (8, 8, 4)
+    # content_sha is over the compressed entry blob, not the raw decompressed tex
+    _, entries = parse_arc(p.read_bytes())
+    entry = [e for e in entries if e.name == "model\\body"][0]
+    data = p.read_bytes()
+    comp_blob = data[entry.offset : entry.offset + entry.comp_size]
+    assert items[0].meta["content_sha"] == hashlib.sha256(comp_blob).hexdigest()
+
+
+def test_arc_decode_content_sha_differs_for_different_content(tmp_path):
+    rgba_a = np.random.default_rng(10).integers(0, 255, (8, 8, 4), dtype=np.uint8)
+    rgba_b = np.random.default_rng(11).integers(0, 255, (8, 8, 4), dtype=np.uint8)
+    info = TexInfo(112, 2, 1, 1, 8, 8, 0, "RGBA8", b"\x00" * 16)
+    entries = [
+        ("a", ARC_TEXTURE_HASH, build_tex(info, rgba_a)),
+        ("b", ARC_TEXTURE_HASH, build_tex(info, rgba_b)),
+    ]
+    blob = build_arc(7, entries)
+    p = tmp_path / "two.arc"
+    p.write_bytes(blob)
+    items = MtfArcCodec().decode(p)
+    assert items[0].meta["content_sha"] != items[1].meta["content_sha"]
 
 
 def test_arc_repack_no_changes_is_identical(tmp_path):
