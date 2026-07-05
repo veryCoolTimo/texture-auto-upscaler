@@ -1,3 +1,5 @@
+import struct
+
 import numpy as np
 import pytest
 
@@ -18,10 +20,33 @@ def _gradient(w, h):
 def test_bcn_roundtrip_close(fmt):
     rgba = _gradient(16, 8)
     blob = encode_bcn(rgba, fmt)
-    back = decode_bcn(blob, 16, 8, fmt)
+    # encode_bcn(..., "DXT3") emits BC3 data (DXT3->BC3 encode policy, since BC2 isn't
+    # supported by ispc_texcomp); the DDS container declares this as DXT5 fourcc
+    # (_FOURCC_OUT), so decode must use "DXT5" here too. Decoding as "DXT3" would run
+    # the new BC2 decoder against BC3-encoded bytes and mismatch.
+    decode_fmt = "DXT5" if fmt == "DXT3" else fmt
+    back = decode_bcn(blob, 16, 8, decode_fmt)
     assert back.shape == (8, 16, 4)
     # BCn с потерями: RG-каналы близки
     assert np.abs(back[..., :2].astype(int) - rgba[..., :2].astype(int)).mean() < 12
+
+
+def test_bc2_decode_known_block():
+    alpha = bytes([0x10, 0x32, 0x54, 0x76, 0x98, 0xBA, 0xDC, 0xFE])
+    c0 = struct.pack("<H", 0xFFFF)  # white
+    c1 = struct.pack("<H", 0x0000)  # black
+    indices = struct.pack("<I", 0x00000000)  # all texels select c0
+    block = alpha + c0 + c1 + indices
+    rgba = decode_bcn(block, 4, 4, "DXT3")
+    assert rgba.shape == (4, 4, 4)
+    assert (rgba[..., :3] == 255).all()
+    expected_alpha = [
+        [0, 17, 34, 51],
+        [68, 85, 102, 119],
+        [136, 153, 170, 187],
+        [204, 221, 238, 255],
+    ]
+    assert rgba[..., 3].tolist() == expected_alpha
 
 
 def test_mip_helpers():
