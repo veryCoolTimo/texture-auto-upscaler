@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import shutil
 from pathlib import Path
 
 from texup.project import Project
 
 BACKUP_DIR = ".texup-backup"
+APPLIED_LEDGER_NAME = "applied.json"
 
 
 def _manifest_hashes(prj: Project) -> dict[Path, str]:
@@ -17,17 +20,41 @@ def _manifest_hashes(prj: Project) -> dict[Path, str]:
     return hashes
 
 
+def _ledger_path(game_dir: Path) -> Path:
+    return game_dir / BACKUP_DIR / APPLIED_LEDGER_NAME
+
+
+def _load_applied_ledger(game_dir: Path) -> dict[str, str]:
+    path = _ledger_path(game_dir)
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def _save_applied_ledger(game_dir: Path, ledger: dict[str, str]) -> None:
+    path = _ledger_path(game_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(ledger, indent=1))
+    os.replace(tmp, path)
+
+
 def apply_to_game(out_dir: Path, *, force: bool = False) -> dict:
     out_dir = Path(out_dir)
     prj = Project.load(out_dir)
     game_dir = prj.game_dir
     hashes = _manifest_hashes(prj)
+    applied_ledger = _load_applied_ledger(game_dir)
     stats = {"applied": 0, "skipped": 0}
     for new_file in sorted(out_dir.rglob("*")):
         if not new_file.is_file():
             continue
         rel = new_file.relative_to(out_dir)
-        if rel.parts[0] in ("_compare",) or rel.name == "texup-project.json":
+        if rel.parts[0] in ("_compare",) or rel.name == "texup-project.json" \
+                or rel.name.endswith(".json.bak"):
             continue
         target = game_dir / rel
         if not target.exists():
@@ -35,16 +62,20 @@ def apply_to_game(out_dir: Path, *, force: bool = False) -> dict:
             continue
         expected = hashes.get(target)
         actual = hashlib.sha256(target.read_bytes()).hexdigest()
-        backup = game_dir / BACKUP_DIR / rel
-        if expected != actual and not backup.exists() and not force:
+        rel_key = rel.as_posix()
+        allowed = actual == expected or actual == applied_ledger.get(rel_key) or force
+        if not allowed:
             print(f"skip (game file changed since scan): {rel}")
             stats["skipped"] += 1
             continue
+        backup = game_dir / BACKUP_DIR / rel
         if not backup.exists():
             backup.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(target, backup)
         shutil.copy2(new_file, target)
+        applied_ledger[rel_key] = hashlib.sha256(new_file.read_bytes()).hexdigest()
         stats["applied"] += 1
+    _save_applied_ledger(game_dir, applied_ledger)
     return stats
 
 
@@ -56,6 +87,13 @@ def rollback_game(game_dir: Path) -> int:
         if not b.is_file():
             continue
         rel = b.relative_to(backup_root)
-        shutil.copy2(b, game_dir / rel)
+        if rel.as_posix() == APPLIED_LEDGER_NAME:
+            continue
+        target = game_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(b, target)
         count += 1
+    ledger_path = _ledger_path(game_dir)
+    if ledger_path.exists():
+        ledger_path.unlink()
     return count
