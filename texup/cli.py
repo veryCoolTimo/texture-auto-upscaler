@@ -49,6 +49,23 @@ def upscale(
 
 
 @app.command()
+def apply(out: Path, force: bool = typer.Option(False, help="Apply even if game files changed since scan")):
+    """Copy upscaled files into the game (originals are backed up)."""
+    from texup.apply import apply_to_game
+
+    stats = apply_to_game(out, force=force)
+    typer.echo(f"applied={stats['applied']} skipped={stats['skipped']}")
+
+
+@app.command()
+def rollback(game_dir: Path):
+    """Restore original files from .texup-backup."""
+    from texup.apply import rollback_game
+
+    typer.echo(f"restored {rollback_game(game_dir)} files")
+
+
+@app.command()
 def preview(texture: Path, max_size: int = 4096):
     """Upscale a single texture file, write before/after PNGs next to it."""
     from PIL import Image
