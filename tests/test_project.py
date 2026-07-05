@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from texup.project import Project
 
 
@@ -34,3 +36,22 @@ def test_set_status_and_filter(tmp_path):
 def test_source_of():
     assert Project.source_of("g/a.png") == (Path("g/a.png"), "")
     assert Project.source_of("g/x.arc::in/t") == (Path("g/x.arc"), "in/t")
+
+
+def test_set_status_rejects_unknown(tmp_path):
+    game, out = tmp_path / "game", tmp_path / "out"
+    game.mkdir()
+    prj = Project.create(game, out)
+    prj.add_texture("k", codec="standard", klass="ui", confidence=1.0,
+                    sha256="x", width=8, height=8, fmt="PNG")
+    with pytest.raises(ValueError):
+        prj.set_status("k", "complete")
+
+
+def test_save_leaves_no_tmp(tmp_path):
+    game, out = tmp_path / "game", tmp_path / "out"
+    game.mkdir()
+    prj = Project.create(game, out)
+    prj.save()
+    assert (out / "texup-project.json").exists()
+    assert not list(out.glob("*.tmp"))

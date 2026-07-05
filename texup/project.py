@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 MANIFEST_NAME = "texup-project.json"
 
 
 class Project:
+    _STATUSES = ("pending", "done", "failed", "skipped")
+
     def __init__(self, game_dir: Path, out_dir: Path, textures: dict[str, dict]):
         self.game_dir = Path(game_dir)
         self.out_dir = Path(out_dir)
@@ -36,6 +39,8 @@ class Project:
 
     def set_status(self, key: str, status: str, *, reason: str | None = None,
                    model: str | None = None) -> None:
+        if status not in self._STATUSES:
+            raise ValueError(f"unknown status: {status!r}")
         rec = self._textures[key]
         rec["status"] = status
         rec["reason"] = reason
@@ -52,7 +57,10 @@ class Project:
 
     def save(self) -> None:
         payload = {"game_dir": str(self.game_dir), "textures": self._textures}
-        (self.out_dir / MANIFEST_NAME).write_text(json.dumps(payload, indent=1))
+        target = self.out_dir / MANIFEST_NAME
+        tmp = target.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(payload, indent=1))
+        os.replace(tmp, target)
 
     @staticmethod
     def source_of(key: str) -> tuple[Path, str]:
