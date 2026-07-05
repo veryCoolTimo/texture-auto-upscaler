@@ -42,12 +42,11 @@ def mtf_ag_unpack(rgba: np.ndarray) -> np.ndarray:
 
 
 def mtf_ag_pack(rgba: np.ndarray) -> np.ndarray:
-    """Обратно: X -> A, Y -> G; RGB заполняем Y (как в оригиналах RE5)."""
+    """Обратно в DXT5nm: X -> A, Y -> G; R и B константные 255 (как в оригиналах RE5)."""
     out = np.empty_like(rgba)
-    y = rgba[..., 1]
-    out[..., 0] = y
-    out[..., 1] = y
-    out[..., 2] = y
+    out[..., 0] = 255
+    out[..., 1] = rgba[..., 1]
+    out[..., 2] = 255
     out[..., 3] = rgba[..., 0]
     return out
 

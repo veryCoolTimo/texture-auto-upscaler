@@ -52,10 +52,10 @@ def test_mtf_ag_swizzle_roundtrip():
     assert np.all(unpacked[..., 2] == 0)                 # B обнулён
     assert np.all(unpacked[..., 3] == 255)               # A константный
     packed = mtf_ag_pack(unpacked)
+    assert np.all(packed[..., 0] == 255)
+    assert np.array_equal(packed[..., 1], unpacked[..., 1])  # Y в G
+    assert np.all(packed[..., 2] == 255)
     assert np.array_equal(packed[..., 3], unpacked[..., 0])
-    y = unpacked[..., 1]
-    for ch in range(3):
-        assert np.array_equal(packed[..., ch], y)        # RGB = Y
 
 
 def test_mtf_dxt5_normal_gets_swizzle_route():
