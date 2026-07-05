@@ -40,3 +40,12 @@ def test_cli_scan_and_status(tmp_path):
     r2 = runner.invoke(app, ["status", str(out)])
     assert r2.exit_code == 0
     assert "pending" in r2.output
+
+
+def test_rescan_backs_up_previous_manifest(tmp_path):
+    game = _make_game(tmp_path)
+    out = tmp_path / "out"
+    scan_game(game, out)
+    first = (out / "texup-project.json").read_text()
+    scan_game(game, out)
+    assert (out / "texup-project.json.bak").read_text() == first

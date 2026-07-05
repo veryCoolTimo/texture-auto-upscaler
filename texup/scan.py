@@ -5,12 +5,15 @@ from pathlib import Path
 
 from texup.classify import classify
 from texup.codecs import find_codec
-from texup.codecs.base import UnsupportedTexture
-from texup.project import Project
+from texup.project import MANIFEST_NAME, Project
 
 
 def scan_game(game_dir: Path, out_dir: Path) -> Project:
     game_dir = Path(game_dir)
+    out_dir = Path(out_dir)
+    existing = out_dir / MANIFEST_NAME
+    if existing.exists():
+        existing.replace(existing.with_suffix(".json.bak"))
     prj = Project.create(game_dir, out_dir)
     for path in sorted(game_dir.rglob("*")):
         if not path.is_file():
