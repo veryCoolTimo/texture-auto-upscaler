@@ -1,0 +1,38 @@
+# Internal docs/specs/plans — not for the public repo
+docs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Models and caches (downloaded on demand, never committed)
+models/
+*.pth
+*.safetensors
+*.onnx
+
+# Work output
+output/
+*.texup-backup/
+texup-project.json
+
+# Test fixtures from real games (copyrighted content)
+tests/fixtures/games/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local env/secrets
+.env
+.env.*
