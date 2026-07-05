@@ -13,3 +13,7 @@ register(StandardCodec())
 from texup.codecs.dds import DdsCodec  # noqa: E402
 
 register(DdsCodec())
+
+from texup.codecs.mtframework import MtfTexCodec  # noqa: E402
+
+register(MtfTexCodec())
