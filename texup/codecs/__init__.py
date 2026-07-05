@@ -9,3 +9,7 @@ from texup.codecs.base import (  # noqa: F401
 from texup.codecs.standard import StandardCodec  # noqa: E402
 
 register(StandardCodec())
+
+from texup.codecs.dds import DdsCodec  # noqa: E402
+
+register(DdsCodec())
