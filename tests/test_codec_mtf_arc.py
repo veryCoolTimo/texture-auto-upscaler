@@ -60,6 +60,20 @@ def test_arc_repack_with_replacement(tmp_path):
     assert zlib.decompress(out[other.offset : other.offset + other.comp_size]) == b"not a texture"
 
 
+def test_arc_data_start_gap(tmp_path):
+    entries = [("a", 0x11111111, b"hello")]
+    blob = build_arc(7, entries, data_start=1024)
+    version, parsed = parse_arc(blob)
+    assert parsed[0].offset == 1024
+    assert blob[8 + 80 : 1024] == b"\x00" * (1024 - 88)
+    assert zlib.decompress(blob[1024 : 1024 + parsed[0].comp_size]) == b"hello"
+    # и репак без замен байт-идентичен
+    p = tmp_path / "g.arc"
+    p.write_bytes(blob)
+    from texup.codecs.mtframework import MtfArcCodec
+    assert MtfArcCodec().encode_file(p, {}) == blob
+
+
 @pytest.mark.skipif(not RE5, reason="TEXUP_RE5_DIR not set")
 def test_real_arc_repack_identical():
     import glob

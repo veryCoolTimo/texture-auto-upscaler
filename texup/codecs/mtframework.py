@@ -134,25 +134,35 @@ def parse_arc(data: bytes) -> tuple[int, list[ArcEntry]]:
 def build_arc(version: int, entries: list[tuple[str, int, bytes]],
               quality: dict[str, int] | None = None,
               precompressed: dict[str, bytes] | None = None,
-              uncomp_sizes: dict[str, int] | None = None) -> bytes:
+              uncomp_sizes: dict[str, int] | None = None,
+              data_start: int | None = None) -> bytes:
     """entries: (name, type_hash, raw_bytes). precompressed[name] — готовый zlib-поток
     (для нетронутых энтри, чтобы репак был байт-идентичным); для таких энтри raw_bytes
-    пустые, а несжатый размер берётся из uncomp_sizes[name]."""
+    пустые, а несжатый размер берётся из uncomp_sizes[name].
+
+    data_start: реальные архивы RE5 резервируют зануленную область перед первым
+    блоком данных (первый offset обычно 32768 или 65536, а не сразу после
+    таблицы заголовков). Если задан и больше header_size, между таблицей и
+    данными добавляется зануленный паддинг соответствующего размера."""
     quality = quality or {}
     precompressed = precompressed or {}
     uncomp_sizes = uncomp_sizes or {}
     blobs = []
     for name, type_hash, raw in entries:
+        if len(name.encode("ascii")) >= 64:
+            raise ValueError(f"entry name too long: {name!r}")
         comp = precompressed.get(name) or zlib.compress(raw, 9)
         blobs.append((name, type_hash, comp, uncomp_sizes.get(name, len(raw))))
     header_size = 8 + len(blobs) * 80
+    pos = max(header_size, data_start) if data_start else header_size
     out = struct.pack("<IHH", ARC_MAGIC, version, len(blobs))
-    pos = header_size
+    start_pos = pos
     for name, type_hash, comp, usize in blobs:
         flags = (usize & 0x1FFFFFFF) | ((quality.get(name, 2) & 0x7) << 29)
         out += name.encode("ascii").ljust(64, b"\x00")
         out += struct.pack("<IIII", type_hash, len(comp), flags, pos)
         pos += len(comp)
+    out += b"\x00" * (start_pos - header_size)
     return out + b"".join(comp for _, _, comp, _ in blobs)
 
 
@@ -189,10 +199,6 @@ class MtfArcCodec:
         data = path.read_bytes()
         version, entries = parse_arc(data)
 
-        # If no replacements, return unchanged (preserves padding and exact byte layout)
-        if not replacements:
-            return data
-
         out_entries, quality, precompressed, uncomp_sizes = [], {}, {}, {}
         for e in entries:
             comp = data[e.offset : e.offset + e.comp_size]
@@ -205,4 +211,5 @@ class MtfArcCodec:
                 out_entries.append((e.name, e.type_hash, b""))
                 precompressed[e.name] = comp
                 uncomp_sizes[e.name] = e.uncomp_size
-        return build_arc(version, out_entries, quality, precompressed, uncomp_sizes)
+        data_start = min((e.offset for e in entries), default=None)
+        return build_arc(version, out_entries, quality, precompressed, uncomp_sizes, data_start=data_start)
