@@ -5,6 +5,7 @@ from texup import models
 
 def test_registry_has_mvp_models():
     assert models.MODELS["realesrgan-x4plus"].scale == 4
+    assert models.MODELS["remacri"].scale == 4
     assert models.MODELS["normal-rg0-bc1"].scale == 4
 
 

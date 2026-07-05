@@ -21,6 +21,11 @@ MODELS: dict[str, ModelSpec] = {
         filename="RealESRGAN_x4plus.pth",
         scale=4,
     ),
+    "remacri": ModelSpec(
+        url="https://huggingface.co/FacehugmanIII/4x_foolhardy_Remacri/resolve/main/4x_foolhardy_Remacri.pth",
+        filename="4x_foolhardy_Remacri.pth",
+        scale=4,
+    ),
     "normal-rg0-bc1": ModelSpec(
         url="https://github.com/RunDevelopment/ESRGAN-models/raw/main/normals/4x-Normal-RG0-BC1.pth",
         filename="4x-Normal-RG0-BC1.pth",

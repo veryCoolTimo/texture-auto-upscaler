@@ -61,4 +61,4 @@ def route_for(klass: str, item: TextureItem) -> Route:
     if klass == "skip":
         return Route(None)
     # diffuse, material, ui
-    return Route("realesrgan-x4plus")
+    return Route("remacri")

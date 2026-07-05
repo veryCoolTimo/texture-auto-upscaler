@@ -22,8 +22,8 @@ def test_font_has_no_model():
     assert route_for("font", _item()).model is None
 
 
-def test_diffuse_uses_realesrgan():
-    assert route_for("diffuse", _item()).model == "realesrgan-x4plus"
+def test_diffuse_uses_remacri():
+    assert route_for("diffuse", _item()).model == "remacri"
 
 
 def test_normal_uses_normal_model():
