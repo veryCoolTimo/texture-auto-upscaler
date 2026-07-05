@@ -20,7 +20,7 @@ def test_synthetic_roundtrip():
     rgba = np.random.default_rng(1).integers(0, 255, (16, 32, 4), dtype=np.uint8)
     blob = build_tex(_info(32, 16, "DXT5", 5), rgba)
     info = parse_tex(blob)
-    assert (info.width, info.height, info.fmt, info.mip_count) == (32, 16, "DXT5", 5)
+    assert (info.width, info.height, info.fmt, info.mip_count) == (32, 16, "DXT5", 6)
 
 
 def test_rgba8_lossless_roundtrip(tmp_path):
@@ -30,6 +30,28 @@ def test_rgba8_lossless_roundtrip(tmp_path):
     p.write_bytes(blob)
     items = MtfTexCodec().decode(p)
     assert np.array_equal(items[0].pixels, rgba)
+
+
+def test_encode_file_upscale_recomputes_mips(tmp_path):
+    rgba = np.random.default_rng(4).integers(0, 255, (16, 32, 4), dtype=np.uint8)
+    blob = build_tex(_info(32, 16, "DXT5", 6), rgba)
+    p = tmp_path / "t.tex"
+    p.write_bytes(blob)
+    codec = MtfTexCodec()
+    up = np.random.default_rng(5).integers(0, 255, (64, 128, 4), dtype=np.uint8)
+    out = parse_tex(codec.encode_file(p, {"": up}))
+    assert (out.width, out.height) == (128, 64)
+    assert out.mip_count == 8  # полная цепочка для 128x64
+    assert out.fmt == "DXT5"
+
+
+def test_encode_file_single_mip_stays_single(tmp_path):
+    rgba = np.zeros((8, 8, 4), dtype=np.uint8)
+    blob = build_tex(_info(8, 8, "RGBA8", 1), rgba)
+    p = tmp_path / "t.tex"
+    p.write_bytes(blob)
+    out = parse_tex(MtfTexCodec().encode_file(p, {"": np.zeros((32, 32, 4), dtype=np.uint8)}))
+    assert out.mip_count == 1
 
 
 @pytest.mark.skipif(not RE5, reason="TEXUP_RE5_DIR not set")

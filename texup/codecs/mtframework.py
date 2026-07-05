@@ -31,6 +31,8 @@ class TexInfo:
 def parse_tex(data: bytes) -> TexInfo:
     if data[:4] != TEX_MAGIC:
         raise UnsupportedTexture("not a TEX")
+    if len(data) < 0x2C:
+        raise UnsupportedTexture("truncated TEX header")
     version, unk1 = struct.unpack_from("<HH", data, 4)
     packed, = struct.unpack_from("<I", data, 8)
     mips, imgs = packed & 0xFF, (packed >> 8) & 0xFF
@@ -53,7 +55,9 @@ def build_tex(info: TexInfo, rgba: np.ndarray) -> bytes:
     h, w = rgba.shape[:2]
     if w > 0xFFFF or h > 0xFFFF:
         raise ValueError("dimensions exceed u16")
-    mips = info.mip_count
+    # Мип-семантика как у DdsCodec.encode_file: multi-mip исходник получает
+    # полную цепочку под НОВЫЕ размеры; одномиповый остаётся одномиповым.
+    mips = mip_levels_for(w, h) if info.mip_count > 1 else 1
     out_fmt = "DXT5" if info.fmt == "DXT3" else info.fmt
     blobs = [encode_bcn(m, out_fmt) for m in build_mip_chain(rgba, mips)]
     header_size = 0x28 + 4 * mips
