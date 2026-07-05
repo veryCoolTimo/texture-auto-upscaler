@@ -48,11 +48,22 @@ def test_mtf_ag_swizzle_roundtrip():
     px = rng.integers(0, 255, (4, 4, 4), dtype=np.uint8)
     unpacked = mtf_ag_unpack(px)
     assert np.array_equal(unpacked[..., 0], px[..., 3])  # X из альфы
+    assert np.array_equal(unpacked[..., 1], px[..., 1])  # Y из G
+    assert np.all(unpacked[..., 2] == 0)                 # B обнулён
+    assert np.all(unpacked[..., 3] == 255)               # A константный
     packed = mtf_ag_pack(unpacked)
     assert np.array_equal(packed[..., 3], unpacked[..., 0])
+    y = unpacked[..., 1]
+    for ch in range(3):
+        assert np.array_equal(packed[..., ch], y)        # RGB = Y
 
 
 def test_mtf_dxt5_normal_gets_swizzle_route():
     item = _item({"tex": True, "format": "DXT5"})
     r = route_for("normal", item)
     assert r.pre is mtf_ag_unpack and r.post is mtf_ag_pack
+
+
+def test_normal_default_route_has_renormalize_post():
+    r = route_for("normal", _item())
+    assert r.post is renormalize and r.pre is None
