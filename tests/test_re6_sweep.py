@@ -1,7 +1,5 @@
 import glob
 import os
-import struct
-import zlib
 from pathlib import Path
 
 import pytest
@@ -12,10 +10,10 @@ pytestmark = pytest.mark.skipif(not RE6, reason="TEXUP_RE6_DIR not set")
 
 
 def test_re6_full_sweep():
-    from texup.codecs.mtframework import ARC_TEXTURE_HASH, MtfArcCodec, parse_arc
+    from texup.codecs.mtframework import MtfArcCodec
 
     codec = MtfArcCodec()
-    total = parsed = skipped = failed = repack_ok = repack_diff = 0
+    parsed = failed = repack_ok = repack_diff = 0
     for ap in sorted(glob.glob(os.path.join(RE6, "**", "*.arc"), recursive=True)):
         p = Path(ap)
         data = p.read_bytes()
@@ -36,5 +34,4 @@ def test_re6_full_sweep():
           f"repack identical={repack_ok} diff={repack_diff}")
     assert failed == 0
     assert repack_diff == 0
-    # Temporarily relaxed to capture the state
-    # assert parsed > 1000
+    assert parsed > 1000  # защита от пустого/неверного TEXUP_RE6_DIR

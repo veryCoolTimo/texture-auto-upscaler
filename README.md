@@ -64,9 +64,9 @@ texup is format-driven, not game-driven: any game whose textures it can decode, 
 | Games | Formats | Status |
 |---|---|---|
 | **Any game with loose textures** — hundreds of older PC titles, most indie games, anything already unpacked by modding tools | PNG, JPG, TGA, BMP, DDS (BC1–BC7) | ✅ works today |
-| **Resident Evil 5**, **Resident Evil 0 HD** | MT Framework v1/v2 `.tex` + `.arc` | ✅ verified on full installs |
-| **RE6, Dragon's Dogma, DMC4, Lost Planet** | same MT Framework formats | ✅ expected to work, verification in progress |
-| **Quake III, Doom 3, RTCW** and other id-Tech era games | ZIP-based paks (PK3/PK4) | 🔜 v2 |
+| **Resident Evil 5**, **Resident Evil 0 HD**, **Resident Evil 6** | MT Framework v1/v2 `.tex` + `.arc` | ✅ verified on full installs |
+| **Dragon's Dogma, DMC4, Lost Planet** | same MT Framework formats | ✅ expected to work |
+| **Quake III, Doom 3, RTCW** and other id-Tech era games | ZIP-based paks (PK3/PK4) | ✅ |
 | **Half-Life 2, Portal, CS:S, L4D, TF2** | Source engine VTF/VPK | 🔜 v2 |
 | **Skyrim, Fallout 4** | Bethesda BSA/BA2 | 🔜 v2 |
 
