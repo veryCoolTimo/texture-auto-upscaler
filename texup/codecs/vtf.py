@@ -92,14 +92,7 @@ def _encode_pixels(rgba: np.ndarray, fmt: str) -> bytes:
         # DXT3 (BC2) has no ispc_texcomp encoder; bcn.encode_bcn already falls back to
         # DXT5, same policy as the DDS codec. The written high_format is adjusted to
         # match (see encode_bytes).
-        blob = encode_bcn(rgba, fmt)
-        # ispc_texcomp's BC1 path (used for DXT1) returns a buffer padded to double the
-        # real per-block size (an internal SIMD-batching quirk — the tail is
-        # uninitialized, not meaningful padding). DDS never notices, since it only ever
-        # reads mip 0 back from the front of the blob; VTF concatenates mips
-        # back-to-back with no slack, so keep only the real bytes.
-        h, w = rgba.shape[:2]
-        return blob[: bcn_size(w, h, fmt)]
+        return encode_bcn(rgba, fmt)
     if fmt == "RGBA8888":
         return np.ascontiguousarray(rgba).tobytes()
     if fmt == "BGRA8888":

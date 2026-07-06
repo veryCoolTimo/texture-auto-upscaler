@@ -81,3 +81,49 @@ def test_dds_roundtrip(tmp_path):
     assert (it2.width, it2.height) == (64, 32)
     assert it2.meta["format"] == "DXT5"
     assert it2.meta["mip_count"] == 7  # полная цепочка для 64x32
+
+
+@pytest.mark.parametrize("fmt,w,h", [("DXT1", 16, 16), ("DXT1", 1, 1), ("DXT3", 16, 16),
+                                     ("DXT5", 16, 16), ("BC5", 16, 16), ("DXT1", 6, 10)])
+def test_encode_bcn_size_exact(fmt, w, h):
+    from texup.codecs.bcn import bcn_size, encode_bcn
+    rgba = np.random.default_rng(0).integers(0, 255, (h, w, 4), dtype=np.uint8)
+    blob = encode_bcn(rgba, fmt)
+    pw, ph = (w + 3) // 4 * 4, (h + 3) // 4 * 4
+    assert len(blob) == bcn_size(pw, ph, fmt)
+
+
+def test_dds_dxt1_mip_chain_exact(tmp_path):
+    """Sanity check: DDS DXT1 multi-mip roundtrip — decode mip 1 manually.
+    Verify offset calculation is exact (no off-by-one from bloated BC1 sizing)
+    and decoded mip is non-garbage."""
+    from texup.codecs.dds import DdsCodec
+    from texup.codecs.bcn import bcn_size
+
+    rgba = _gradient(16, 16)
+    codec = DdsCodec()
+    p = tmp_path / "mip_test.dds"
+    p.write_bytes(codec.build_dds(rgba, "DXT1", mip_count=3))
+
+    data = p.read_bytes()
+    items = codec.decode(p)
+    it = items[0]
+    assert it.meta["mip_count"] == 3
+
+    # Manually navigate DDS to extract mip 1 (8x8)
+    # DDS header is 128 bytes; mip 0 (16x16) at offset 128
+    mip0_size = bcn_size(16, 16, "DXT1")  # should be exact now
+    mip1_offset = 128 + mip0_size
+    mip1_size = bcn_size(8, 8, "DXT1")
+    mip1_blob = data[mip1_offset : mip1_offset + mip1_size]
+
+    # Decode mip 1 directly
+    mip1_decoded = decode_bcn(mip1_blob, 8, 8, "DXT1")
+    assert mip1_decoded.shape == (8, 8, 4)
+    # Check decoded content is sensible (non-garbage): mean should be within
+    # ~60 of box-downsampled original (a basic sanity check)
+    orig_downsampled = np.asarray(_gradient(16, 16)).astype(int)
+    orig_downsampled = orig_downsampled[::2, ::2, :]  # simple box downsample
+    decoded_mean = mip1_decoded.astype(int).mean()
+    original_mean = orig_downsampled.mean()
+    assert abs(decoded_mean - original_mean) < 60

@@ -115,7 +115,8 @@ def encode_bcn(rgba: np.ndarray, fmt: str) -> bytes:
         "DXT5": itc.compress_blocks_bc3,
         "BC5": itc.compress_blocks_bc5,
     }
-    return bytes(encoders[fmt](surf))
+    out = bytes(encoders[fmt](surf))
+    return out[: bcn_size(pw, ph, fmt)]
 
 
 def mip_levels_for(w: int, h: int) -> int:
