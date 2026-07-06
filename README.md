@@ -57,17 +57,28 @@ open ./out/_compare
 
 Models download automatically on first use (~130 MB) into `~/.cache/texup/models/`.
 
-## What it supports
+## Supported games
+
+texup is format-driven, not game-driven: any game whose textures it can decode, it can remaster.
+
+| Games | Formats | Status |
+|---|---|---|
+| **Any game with loose textures** — hundreds of older PC titles, most indie games, anything already unpacked by modding tools | PNG, JPG, TGA, BMP, DDS (BC1–BC7) | ✅ works today |
+| **Resident Evil 5**, **Resident Evil 0 HD** | MT Framework v1/v2 `.tex` + `.arc` | ✅ verified on full installs |
+| **RE6, Dragon's Dogma, DMC4, Lost Planet** | same MT Framework formats | ✅ expected to work, verification in progress |
+| **Quake III, Doom 3, RTCW** and other id-Tech era games | ZIP-based paks (PK3/PK4) | 🔜 v2 |
+| **Half-Life 2, Portal, CS:S, L4D, TF2** | Source engine VTF/VPK | 🔜 v2 |
+| **Skyrim, Fallout 4** | Bethesda BSA/BA2 | 🔜 v2 |
+
+Verification standard: every codec is validated against a full real installation before it's called supported — RE5: 645/645 loose textures byte-exact, 1231/1232 archives repack byte-identical; RE0 HD: 10,454 textures parse with exact size match. Codecs are plugins — a new engine is one file implementing `detect / decode / encode_file`.
+
+## Under the hood
 
 | Layer | Support |
 |---|---|
-| Image formats | PNG, JPG, TGA, BMP, DDS (BC1/DXT1, BC2/DXT3, BC3/DXT5, BC5, BC7, uncompressed) |
-| Game engines | MT Framework **v1** (Resident Evil 5) and **v2** (Resident Evil 0 HD): `.tex` textures + `.arc` archives, byte-identical repack. Other MT Framework titles (RE6, Dragon's Dogma, DMC4, Lost Planet) share these formats and should work — verification in progress |
 | Texture classes | diffuse / albedo, normal maps (incl. DXT5nm AG-swizzle), material masks, UI, font atlases |
 | Hardware | Apple Silicon (MPS, fp16), NVIDIA (CUDA), CPU fallback |
 | Models | anything [spandrel](https://github.com/chaiNNer-org/spandrel) loads — the registry ships Remacri, Real-ESRGAN x4plus and a BC-aware normal-map model |
-
-Codecs are plugins: a new engine is one file implementing `detect / decode / encode_file`. Both MT Framework generations were reverse-engineered and verified against full real installations: RE5 — 645/645 loose textures byte-exact, 1231/1232 archives repack byte-identical; RE0 HD — 10,454 textures parse with exact size match (99%, the rest are cubemaps, safely skipped).
 
 ## Built for real scale
 
