@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol, runtime_checkable
 
 import numpy as np
@@ -9,6 +9,28 @@ import numpy as np
 
 class UnsupportedTexture(Exception):
     """Codec recognizes the file but this variant is not supported."""
+
+
+def is_safe_inner_path(inner: str) -> bool:
+    """True if `inner` is a relative archive-entry path with no traversal,
+    no absolute/drive component, and no separator tricks. Container codecs
+    (VPK, ZIP, ...) must reject any entry that fails this check before it
+    ever reaches the manifest or gets used to build an on-disk path — a
+    crafted entry like `../../../foo.vtf` would otherwise let an untrusted
+    archive write outside the intended output directory."""
+    if not inner:
+        return False
+    # normalize windows separators archives sometimes use
+    norm = inner.replace("\\", "/")
+    if norm.startswith("/"):
+        return False
+    # reject drive-letter / UNC style (e.g. "C:...")
+    if ":" in norm.split("/", 1)[0]:
+        return False
+    parts = PurePosixPath(norm).parts
+    if any(p == ".." for p in parts):
+        return False
+    return True
 
 
 @dataclass(eq=False)

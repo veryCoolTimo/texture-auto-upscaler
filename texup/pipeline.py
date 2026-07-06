@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from collections import defaultdict
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -47,10 +48,16 @@ def _finalize_source(codec, src: Path, game_dir: Path, out_dir: Path,
         # Read-only containers (e.g. VPK): write each replaced entry as its own
         # loose file next to the container instead of repacking the whole file.
         rel_dir = src.parent.relative_to(game_dir)
+        out_root = out_dir.resolve()
         for inner, rgba in replacements.items():
             orig_bytes = codec.read_inner(src, inner)
             blob = codec.encode_inner(inner, orig_bytes, rgba)
             target = out_dir / rel_dir / codec.loose_target(inner)
+            # Belt-and-suspenders: the decode-side guard (is_safe_inner_path)
+            # is the primary defense, but a future codec could forget to
+            # filter, so finalize must never write outside out_dir either.
+            if os.path.commonpath([out_root, target.resolve()]) != str(out_root):
+                raise ValueError(f"unsafe loose target escapes output dir: {inner}")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(blob)
     else:

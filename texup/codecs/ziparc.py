@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
-from texup.codecs.base import TextureItem
+from texup.codecs.base import TextureItem, is_safe_inner_path
 from texup.codecs.dds import DdsCodec
 from texup.codecs.standard import StandardCodec
 
@@ -39,6 +39,8 @@ class ZipCodec:
         with zipfile.ZipFile(path) as zf:
             for info in zf.infolist():
                 if info.is_dir():
+                    continue
+                if not is_safe_inner_path(info.filename):  # reject traversal/absolute entry names
                     continue
                 ext = self._entry_ext(info.filename)
                 if ext not in _STD_EXTS and ext != ".dds":

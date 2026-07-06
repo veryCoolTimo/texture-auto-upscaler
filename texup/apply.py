@@ -12,6 +12,15 @@ BACKUP_DIR = ".texup-backup"
 APPLIED_LEDGER_NAME = "applied.json"
 
 
+def _is_contained(base: Path, target: Path) -> bool:
+    """True if `target` resolves to a path under `base`. Guards against a
+    poisoned applied-file ledger (rel keys are persisted JSON, not re-derived
+    from a filesystem walk on every use) steering a copy/delete outside the
+    game directory."""
+    base_root = base.resolve()
+    return os.path.commonpath([base_root, target.resolve()]) == str(base_root)
+
+
 def _manifest_hashes(prj: Project) -> dict[Path, str]:
     hashes: dict[Path, str] = {}
     for r in prj.records():
@@ -68,6 +77,10 @@ def apply_to_game(out_dir: Path, *, force: bool = False) -> dict:
                 continue
             # Brand-new loose file (e.g. a VPK texture written out-of-container):
             # there is no original in the game dir, so there's nothing to back up.
+            if not _is_contained(game_dir, target):
+                print(f"skip (unsafe target escapes game dir): {rel}")
+                stats["skipped"] += 1
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(new_file, target)
             created.add(rel_key)
@@ -112,6 +125,9 @@ def rollback_game(game_dir: Path) -> int:
     ledger = _load_applied_ledger(game_dir)
     for rel_key in ledger.get("created", []):
         target = game_dir / Path(rel_key)
+        if not _is_contained(game_dir, target):
+            print(f"skip (unsafe ledger entry escapes game dir): {rel_key}")
+            continue
         if not target.exists():
             continue
         target.unlink()

@@ -18,7 +18,7 @@ from pathlib import Path
 import numpy as np
 import vpk as _vpk
 
-from texup.codecs.base import TextureItem, UnsupportedTexture
+from texup.codecs.base import TextureItem, UnsupportedTexture, is_safe_inner_path
 from texup.codecs.vtf import VtfCodec
 
 _MAGIC = 0x55AA1234
@@ -49,6 +49,8 @@ class VpkCodec:
         pkg = self._open(path)
         for inner in pkg:
             if not inner.lower().endswith(".vtf"):
+                continue
+            if not is_safe_inner_path(inner):  # untrusted archive: reject traversal/absolute names
                 continue
             try:
                 data = pkg.get_file(inner).read()
