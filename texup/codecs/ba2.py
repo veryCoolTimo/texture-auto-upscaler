@@ -43,6 +43,33 @@ already-correct per-file records (`hash`/`ext`/`offset`/`packed_size`/
 offsets, it just doesn't let the library's off-by-one string slicing
 corrupt the names.
 
+Per-entry resilience — real, not just the fragile ``next()`` pattern
+---------------------------------------------------------------------
+Python generators are permanently exhausted the moment they raise out of
+their body: catching the exception around a subsequent `next()` call does
+**not** resume the loop — everything after the failure point is silently
+lost. An earlier version of this codec drove iteration with exactly that
+broken `next()`-in-a-try pattern, which only ever protected the *first*
+entry. Both `_iter_gnrl_entries` and `_iter_dx10_entries` below instead
+guard each entry's own extraction *inside* their own loop body, so a bad
+record makes the generator `continue` to the next one instead of raising —
+true resilience for every record, front to back:
+
+- GNRL: `archive.container.files` is a fully pre-parsed record array (each
+  record's offset/packed_size/unpacked_size), so each entry's slice +
+  optional zlib-decompress is read independently, no shared iterator state.
+- DX10: `archive.container.files` is likewise pre-parsed (header + chunk
+  table per entry), so each entry's DDS-header synthesis and chunk
+  decompression is likewise independent per record. The one sequential
+  dependency between entries is the name table itself (each name is a
+  `uint16 length`-prefixed string, so the next name's offset is only known
+  once the current one is parsed) — if the name table itself is corrupt,
+  we can't recover the offset for the records after it and honestly stop
+  there (see the `except Exception` around name parsing, which warns and
+  returns instead of pretending to continue); this is orthogonal to, and
+  does not affect, per-entry resilience against corrupt pixel/chunk data,
+  which is the failure mode both DX10 and GNRL guard against.
+
 Repacking a BA2 in place is out of scope for this codec — replaced textures
 are written by the pipeline as loose .dds files next to the container
 (`loose_output`/`loose_target`/`encode_inner`/`read_inner`, consumed by
@@ -52,12 +79,14 @@ from __future__ import annotations
 
 import hashlib
 import struct
+import warnings
 import zlib
 from pathlib import Path, PureWindowsPath
 from typing import Iterator
 
 import numpy as np
 from bethesda_structs.archive import BTDXArchive
+from construct import Compressed, GreedyBytes, Int16ul, PascalString
 
 from texup.codecs.base import TextureItem, UnsupportedTexture, is_safe_inner_path
 from texup.codecs.dds import DdsCodec
@@ -67,20 +96,79 @@ _MAGIC = b"BTDX"
 
 def _iter_gnrl_entries(archive: BTDXArchive) -> Iterator[tuple[str, bytes]]:
     """Yield (inner_path, data) for a GNRL-type BA2, working around the
-    upstream name-table parsing bug documented in this module's docstring."""
+    upstream name-table parsing bug documented in this module's docstring.
+    Each entry's name-table read and data extraction/decompression is
+    guarded independently, so one malformed record doesn't stop iteration
+    of the records after it (see "Per-entry resilience" above)."""
     content = archive.content
     container = archive.container
     offset = container.header.names_offset
     for file_container in container.files:
-        length = struct.unpack_from("<H", content, offset)[0]
-        name = content[offset + 2 : offset + 2 + length].decode("utf-8")
+        try:
+            length = struct.unpack_from("<H", content, offset)[0]
+            name = content[offset + 2 : offset + 2 + length].decode("utf-8")
+        except Exception:  # noqa: BLE001 — corrupt name table: can't recover subsequent offsets
+            warnings.warn(
+                f"BA2 GNRL name table corrupt at offset {offset}; stopping "
+                "iteration early, entries after this point are skipped",
+                stacklevel=2,
+            )
+            return
         offset += 2 + length
-        data = content[
-            file_container.offset : file_container.offset + file_container.unpacked_size
-        ]
-        if file_container.packed_size > 0:
-            data = zlib.decompress(data)
+        try:
+            data = content[
+                file_container.offset : file_container.offset + file_container.unpacked_size
+            ]
+            if file_container.packed_size > 0:
+                data = zlib.decompress(data)
+        except Exception:  # noqa: BLE001 — bad/unsupported record: skip just this one
+            continue
         yield PureWindowsPath(name).as_posix(), data
+
+
+def _iter_dx10_entries(archive: BTDXArchive) -> Iterator[tuple[str, bytes]]:
+    """Yield (inner_path, synthesized_dds_bytes) for a DX10-type BA2. Each
+    entry's DDS-header synthesis and per-chunk decompression is guarded
+    independently (see "Per-entry resilience" above); only a corrupt name
+    table (rare, and orthogonal to per-entry chunk-data corruption) forces
+    early termination, since subsequent name offsets can't be recovered."""
+    content = archive.content
+    names_offset = archive.container.header.names_offset
+    filename_offset = 0
+    for file_container in archive.container.files:
+        try:
+            name = PascalString(Int16ul, "utf8").parse(
+                content[names_offset + filename_offset :]
+            )
+        except Exception:  # noqa: BLE001 — corrupt name table: can't recover subsequent offsets
+            warnings.warn(
+                f"BA2 DX10 name table corrupt at offset {filename_offset}; "
+                "stopping iteration early, entries after this point are skipped",
+                stacklevel=2,
+            )
+            return
+        filename_offset += len(name) + 2
+
+        try:
+            built = archive._build_dds_headers(file_container)
+            if not built or not built[0]:
+                continue
+            dds_header, dx10_header = built
+            dds_content = b"DDS " + dds_header
+            if dx10_header:
+                dds_content += dx10_header
+            for tex_chunk in file_container.chunks:
+                if tex_chunk.packed_size > 0:
+                    dds_content += Compressed(GreedyBytes, "zlib").parse(
+                        content[tex_chunk.offset : tex_chunk.offset + tex_chunk.packed_size]
+                    )
+                else:
+                    dds_content += content[
+                        tex_chunk.offset : tex_chunk.offset + tex_chunk.unpacked_size
+                    ]
+        except Exception:  # noqa: BLE001 — bad/unsupported record: skip just this one
+            continue
+        yield PureWindowsPath(name).as_posix(), dds_content
 
 
 class Ba2Codec:
@@ -104,26 +192,21 @@ class Ba2Codec:
 
     def _iter_entries(self, archive: BTDXArchive) -> Iterator[tuple[str, bytes]]:
         """Yield (inner_path, raw_bytes) uniformly for GNRL and DX10 BA2s.
-        DX10 entries come back from the library's own `iter_files()` already
-        synthesized into complete, standalone DDS byte strings; GNRL entries
-        go through `_iter_gnrl_entries` (see module docstring)."""
+        Both `_iter_gnrl_entries` and `_iter_dx10_entries` (see module
+        docstring) guard each entry's own extraction independently, so a
+        malformed record can't stop iteration of the records after it —
+        callers here can use a plain `for` loop with no `next()`-catching
+        (which would NOT resume a generator that already raised out of its
+        body; see module docstring's "Per-entry resilience" section)."""
         if archive.container.header.type == "GNRL":
             yield from _iter_gnrl_entries(archive)
         else:
-            for entry in archive.iter_files():
-                yield entry.filepath.as_posix(), entry.data
+            yield from _iter_dx10_entries(archive)
 
     def decode(self, path: Path) -> list[TextureItem]:
         items: list[TextureItem] = []
         archive = self._open(path)
-        it = iter(self._iter_entries(archive))
-        while True:
-            try:
-                inner, data = next(it)
-            except StopIteration:
-                break
-            except Exception:  # noqa: BLE001 — bad/unsupported entry: skip, don't drop the archive
-                continue
+        for inner, data in self._iter_entries(archive):
             if not inner.lower().endswith(".dds"):
                 continue
             if not is_safe_inner_path(inner):  # untrusted archive: reject traversal/absolute names
@@ -141,14 +224,7 @@ class Ba2Codec:
         for GNRL) so `encode_inner` can rebuild the DDS around upscaled
         pixels using the same header `decode()` saw."""
         archive = self._open(path)
-        it = iter(self._iter_entries(archive))
-        while True:
-            try:
-                entry_inner, data = next(it)
-            except StopIteration:
-                break
-            except Exception:  # noqa: BLE001 — skip a bad entry, keep looking
-                continue
+        for entry_inner, data in self._iter_entries(archive):
             if entry_inner == inner:
                 return data
         raise KeyError(f"no such entry {inner!r} in {path}")

@@ -98,6 +98,41 @@ def _make_ba2_gnrl(entries: list[tuple[str, bytes]]) -> bytes:
     return header + file_structs + file_data + names_blob
 
 
+def _make_ba2_gnrl_with_bad_middle(
+    good1: bytes,
+    bad_payload: bytes,
+    good2: bytes,
+    name1: str,
+    name2: str,
+    name3: str,
+) -> bytes:
+    """Three-entry GNRL BA2 where the SECOND (middle) entry is stored with
+    `packed_size > 0` (claims to be zlib-compressed) but `bad_payload` is
+    NOT a valid zlib stream — a realistic malformed record, not a
+    monkeypatch. `good1`/`good2` are stored uncompressed and must survive."""
+    entries_data = [good1, bad_payload, good2]
+    names = [name1, name2, name3]
+    unpacked_sizes = [len(good1), len(bad_payload), len(good2)]
+    packed_sizes = [0, len(bad_payload), 0]
+
+    cur = _HEADER_LEN + _GNRL_FILE_STRUCT_LEN * 3
+    offsets = []
+    for d in entries_data:
+        offsets.append(cur)
+        cur += len(d)
+    names_offset = cur
+
+    file_structs = b""
+    for name, off, packed, unpacked in zip(names, offsets, packed_sizes, unpacked_sizes):
+        ext = Path(name).suffix.lstrip(".")[:4].encode("ascii").ljust(4, b"\0")
+        file_structs += struct.pack("<I4sIIQIII", 0, ext, 0, 0, off, packed, unpacked, 0)
+
+    file_data = b"".join(entries_data)
+    names_blob = b"".join(_pascal_2byte(n) for n in names)
+    header = struct.pack("<4sI4sIQ", b"BTDX", 1, b"GNRL", 3, names_offset)
+    return header + file_structs + file_data + names_blob
+
+
 def _make_ba2_dx10(entries: list[tuple[str, np.ndarray, str]]) -> bytes:
     """Hand-assemble a minimal, valid BTDX/DX10 (BA2 texture) archive from
     `entries` of (inner_path, rgba, fmt). Each texture gets exactly one
@@ -120,6 +155,47 @@ def _make_ba2_dx10(entries: list[tuple[str, np.ndarray, str]]) -> bytes:
             "<I4sIBBHHHBBH", 0, b"dds\0", 0, 0, 1, _TEX_CHUNK_LEN, h, w, 1, _DXGI[fmt], 0
         )
         tex_chunk = struct.pack("<QIIHHI", off, 0, len(blob), 0, 0, 0)
+        tex_records += tex_header + tex_chunk
+
+    data_blob = b"".join(blobs)
+    names_blob = b"".join(_pascal_2byte(name) for name, _, _ in entries)
+    header = struct.pack("<4sI4sIQ", b"BTDX", 1, b"DX10", n, names_offset)
+    return header + tex_records + data_blob + names_blob
+
+
+def _make_ba2_dx10_with_bad_middle(
+    entries: list[tuple[str, np.ndarray, str]], corrupt_index: int
+) -> bytes:
+    """Like `_make_ba2_dx10`, but the chunk of the entry at `corrupt_index`
+    claims to be zlib-compressed (`packed_size > 0`) while actually holding
+    garbage — a realistic malformed chunk (not a monkeypatch), forcing
+    `zlib.decompress` to fail for that entry only."""
+    blobs = []
+    for i, (_name, rgba, fmt) in enumerate(entries):
+        if i == corrupt_index:
+            blobs.append(b"\xffnot a valid zlib stream\xff")
+        else:
+            blobs.append(encode_bcn(rgba, fmt))
+    n = len(entries)
+    record_len = _TEX_HEADER_LEN + _TEX_CHUNK_LEN
+    cur = _HEADER_LEN + record_len * n
+    data_offsets = []
+    for blob in blobs:
+        data_offsets.append(cur)
+        cur += len(blob)
+    names_offset = cur
+
+    tex_records = b""
+    for i, ((name, rgba, fmt), blob, off) in enumerate(zip(entries, blobs, data_offsets)):
+        h, w = rgba.shape[:2]
+        tex_header = struct.pack(
+            "<I4sIBBHHHBBH", 0, b"dds\0", 0, 0, 1, _TEX_CHUNK_LEN, h, w, 1, _DXGI[fmt], 0
+        )
+        if i == corrupt_index:
+            packed_size, unpacked_size = len(blob), 0
+        else:
+            packed_size, unpacked_size = 0, len(blob)
+        tex_chunk = struct.pack("<QIIHHI", off, packed_size, unpacked_size, 0, 0, 0)
         tex_records += tex_header + tex_chunk
 
     data_blob = b"".join(blobs)
@@ -372,44 +448,75 @@ def test_apply_creates_loose_files_and_rollback_deletes(tmp_path):
 # --- per-entry resilience -------------------------------------------------
 
 
-def test_decode_resilience_skips_bad_entry(tmp_path):
-    """Monkeypatch _iter_entries to yield one good entry, then raise on the
-    second advance. Verify decode() returns the one good item and doesn't
-    abort the entire archive scan (same guarantee as BsaCodec)."""
-    p = _make_ba2_gnrl_file(tmp_path)
+def test_decode_gnrl_resumes_after_malformed_middle_entry(tmp_path):
+    """Real per-entry resilience, not a monkeypatched mock: a THREE-entry
+    GNRL archive whose SECOND (middle) entry claims to be zlib-compressed
+    but holds garbage must still yield entries 1 AND 3. This is the exact
+    scenario the generator-exhaustion bug broke: a `next()`-catching loop
+    over a shared iterator would have lost entry 3 too, since a Python
+    generator that raises out of its body is permanently exhausted."""
+    good1 = _dds_bytes(color=(200, 120, 60, 255))
+    good2 = _dds_bytes(color=(10, 220, 40, 255))
+    bad_payload = b"\xffnot a valid zlib stream\xff"
+    p = tmp_path / "mid_corrupt.ba2"
+    p.write_bytes(
+        _make_ba2_gnrl_with_bad_middle(
+            good1,
+            bad_payload,
+            good2,
+            name1="textures/wall/brick_d.dds",
+            name2="textures/wall/corrupt_d.dds",
+            name3="textures/wall/wall_d.dds",
+        )
+    )
+
+    items = Ba2Codec().decode(p)
+    names = sorted(it.inner_path for it in items)
+    assert names == ["textures/wall/brick_d.dds", "textures/wall/wall_d.dds"]
+
+
+def test_read_inner_gnrl_resumes_after_malformed_middle_entry(tmp_path):
+    """Same three-entry GNRL archive: `read_inner` for the entry AFTER the
+    malformed middle one must still succeed, and querying the malformed
+    entry itself raises KeyError since it was never yielded."""
+    good1 = _dds_bytes(color=(200, 120, 60, 255))
+    good2 = _dds_bytes(color=(10, 220, 40, 255))
+    bad_payload = b"\xffnot a valid zlib stream\xff"
+    p = tmp_path / "mid_corrupt.ba2"
+    p.write_bytes(
+        _make_ba2_gnrl_with_bad_middle(
+            good1,
+            bad_payload,
+            good2,
+            name1="textures/wall/brick_d.dds",
+            name2="textures/wall/corrupt_d.dds",
+            name3="textures/wall/wall_d.dds",
+        )
+    )
     codec = Ba2Codec()
-    original_iter_entries = codec._iter_entries
-
-    def patched(archive):
-        it = original_iter_entries(archive)
-        yield next(it)  # first good entry (brick_d.dds)
-        raise ValueError("Simulated corrupt entry during iteration")
-
-    codec._iter_entries = patched
-    items = codec.decode(p)
-    assert len(items) == 1
-    assert items[0].inner_path == "textures/wall/brick_d.dds"
-
-
-def test_read_inner_resilience_skips_bad_entry(tmp_path):
-    p = _make_ba2_gnrl_file(tmp_path)
-    codec = Ba2Codec()
-    original_iter_entries = codec._iter_entries
-
-    def patched(archive):
-        it = original_iter_entries(archive)
-        try:
-            next(it)  # simulate the first entry failing
-            raise ValueError("Simulated corrupt first entry")
-        except ValueError:
-            pass
-        for entry in it:
-            yield entry
-
-    codec._iter_entries = patched
 
     data = codec.read_inner(p, "textures/wall/wall_d.dds")
-    assert data == _dds_bytes(color=(10, 220, 40, 255))
+    assert data == good2
 
     with pytest.raises(KeyError, match="no such entry"):
-        codec.read_inner(p, "textures/wall/brick_d.dds")
+        codec.read_inner(p, "textures/wall/corrupt_d.dds")
+
+
+def test_decode_dx10_resumes_after_malformed_middle_entry(tmp_path):
+    """DX10's independent per-record chunk extraction gets the same true
+    resilience guarantee as GNRL and BSA: a THREE-entry DX10 archive whose
+    SECOND (middle) entry's chunk claims to be zlib-compressed but holds
+    garbage must still yield entries 1 AND 3."""
+    entries = [
+        ("textures/armor/cuirass_d.dds", _grad(16, 16), "BC7"),
+        ("textures/armor/corrupt_n.dds", _grad(16, 16), "DXT5"),
+        ("textures/armor/cuirass_n.dds", _grad(16, 16), "DXT5"),
+    ]
+    p = tmp_path / "mid_corrupt.ba2"
+    p.write_bytes(_make_ba2_dx10_with_bad_middle(entries, corrupt_index=1))
+
+    items = {it.inner_path: it for it in Ba2Codec().decode(p)}
+    assert set(items) == {
+        "textures/armor/cuirass_d.dds",
+        "textures/armor/cuirass_n.dds",
+    }

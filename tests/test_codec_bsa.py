@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import struct
+import zlib
 from collections import OrderedDict
 from pathlib import Path
 
@@ -94,6 +95,79 @@ def _make_bsa(entries: list[tuple[str, str, bytes]], version: int = 104) -> byte
             cur_offset += len(data)
 
     file_data = b"".join(data for files in grouped.values() for _, data in files)
+
+    return header + dir_records + dir_blocks + file_name_bytes + file_data
+
+
+def _make_bsa_compressed(
+    entries: list[tuple[str, str, bytes]], corrupt_index: int, version: int = 104
+) -> bytes:
+    """Like `_make_bsa`, but sets the archive-wide `files_compressed` flag so
+    every entry is stored on disk as `orig_size:uint32-LE + zlib(data)`
+    (matching `BSAArchive.compressed_file_struct` for version < 105). The
+    entry at `corrupt_index` (0-based, flattened front-to-back across all
+    directories) gets a bogus, non-zlib payload instead of a real one — a
+    realistic malformed record (bad/garbage compressed data), not a
+    monkeypatch of the codec's own internals."""
+    grouped: "OrderedDict[str, list[tuple[str, bytes]]]" = OrderedDict()
+    for d, fname, data in entries:
+        grouped.setdefault(d, []).append((fname, data))
+
+    directory_count = len(grouped)
+    file_count = sum(len(v) for v in grouped.values())
+
+    dir_name_bytes = [_pascal_dir_name(d.replace("/", "\\")) for d in grouped]
+    file_names_flat = [fname for files in grouped.values() for fname, _ in files]
+    file_name_bytes = b"".join(_cstring(n) for n in file_names_flat)
+
+    dir_records_size = 16 * directory_count
+    dir_blocks_size = sum(
+        len(nb) + 16 * len(files) for nb, files in zip(dir_name_bytes, grouped.values())
+    )
+    header_size = 36 + dir_records_size + dir_blocks_size + len(file_name_bytes)
+
+    header = struct.pack(
+        "<4sIIIIIIII",
+        b"BSA\x00",
+        version,
+        36,  # directory_offset == header size
+        0x007,  # archive_flags: directories_named | files_named | files_compressed
+        directory_count,
+        file_count,
+        0,
+        0,
+        0x002,  # file_flags: dds
+    )
+    assert len(header) == 36
+
+    dir_records = b"".join(
+        struct.pack("<QII", 0, len(files), 0) for files in grouped.values()
+    )
+
+    blobs = []
+    idx = 0
+    for files in grouped.values():
+        for _fname, data in files:
+            if idx == corrupt_index:
+                # Deliberately not a valid zlib stream: zlib.decompress on
+                # this must raise.
+                blob = struct.pack("<I", len(data)) + b"\xffnot a valid zlib stream\xff"
+            else:
+                blob = struct.pack("<I", len(data)) + zlib.compress(data)
+            blobs.append(blob)
+            idx += 1
+
+    cur_offset = header_size
+    dir_blocks = b""
+    blob_iter = iter(blobs)
+    for name_bytes, files in zip(dir_name_bytes, grouped.values()):
+        dir_blocks += name_bytes
+        for _fname, _data in files:
+            blob = next(blob_iter)
+            dir_blocks += struct.pack("<QII", 0, len(blob), cur_offset)
+            cur_offset += len(blob)
+
+    file_data = b"".join(blobs)
 
     return header + dir_records + dir_blocks + file_name_bytes + file_data
 
@@ -237,71 +311,44 @@ def test_apply_creates_loose_files_and_rollback_deletes(tmp_path):
     assert bsa_path.read_bytes() == original_bsa_bytes
 
 
-def test_decode_resilience_skips_bad_entry(tmp_path):
-    """Monkeypatch iter_files to yield one good entry, then raise on the
-    second advance. Verify decode() returns the one good item and doesn't
-    abort the entire archive scan."""
-    p = _make_bsa_file(tmp_path)
+def test_decode_resumes_after_malformed_middle_entry(tmp_path):
+    """Real per-entry resilience, not a monkeypatched mock: a THREE-entry
+    archive whose SECOND (middle) entry has a genuinely malformed payload
+    (claims to be zlib-compressed but isn't) must still yield entries 1 AND
+    3. This is the exact scenario the generator-exhaustion bug broke: a
+    `next()`-catching loop over `BSAArchive.iter_files()` would have lost
+    entry 3 too, since a Python generator that raises out of its body is
+    permanently exhausted (`next()` on it afterwards raises StopIteration,
+    it does not resume the underlying loop)."""
+    entries = [
+        ("textures/wall", "brick_d.dds", _dds_bytes(color=(200, 120, 60, 255))),
+        ("textures/wall", "corrupt_d.dds", _dds_bytes(color=(1, 2, 3, 255))),
+        ("textures/wall", "wall_d.dds", _dds_bytes(color=(10, 220, 40, 255))),
+    ]
+    p = tmp_path / "mid_corrupt.bsa"
+    p.write_bytes(_make_bsa_compressed(entries, corrupt_index=1))
+
+    items = BsaCodec().decode(p)
+    names = sorted(it.inner_path for it in items)
+    assert names == ["textures/wall/brick_d.dds", "textures/wall/wall_d.dds"]
+
+
+def test_read_inner_resumes_after_malformed_middle_entry(tmp_path):
+    """Same three-entry archive as above: `read_inner` for the entry AFTER
+    the malformed middle one must still succeed (true resume, not just
+    "first entry survives"), and querying the malformed entry itself raises
+    KeyError since it was never yielded."""
+    entries = [
+        ("textures/wall", "brick_d.dds", _dds_bytes(color=(200, 120, 60, 255))),
+        ("textures/wall", "corrupt_d.dds", _dds_bytes(color=(1, 2, 3, 255))),
+        ("textures/wall", "wall_d.dds", _dds_bytes(color=(10, 220, 40, 255))),
+    ]
+    p = tmp_path / "mid_corrupt.bsa"
+    p.write_bytes(_make_bsa_compressed(entries, corrupt_index=1))
     codec = BsaCodec()
 
-    # Monkeypatch archive.iter_files to fail mid-iteration
-    original_open = codec._open
-
-    def patched_open(path: Path):
-        archive = original_open(path)
-        original_iter = archive.iter_files
-
-        def failing_iter():
-            """Yield one entry, then raise on the next advance."""
-            it = original_iter()
-            yield next(it)  # Yield the first entry (brick_d.dds)
-            raise ValueError("Simulated corrupt entry during iteration")
-
-        archive.iter_files = failing_iter
-        return archive
-
-    codec._open = patched_open
-    items = codec.decode(p)
-
-    # Even though the second entry fails, we should have decoded the first
-    assert len(items) == 1
-    assert items[0].inner_path == "textures/wall/brick_d.dds"
-
-
-def test_read_inner_resilience_skips_bad_entry(tmp_path):
-    """Verify read_inner() survives a bad entry during iteration and can
-    still retrieve a later good entry."""
-    p = _make_bsa_file(tmp_path)
-    codec = BsaCodec()
-
-    # Monkeypatch archive.iter_files to fail on the first entry, succeed on the second
-    original_open = codec._open
-
-    def patched_open(path: Path):
-        archive = original_open(path)
-        original_iter = archive.iter_files
-
-        def failing_iter():
-            """Raise on the first advance, then yield remaining entries."""
-            it = original_iter()
-            try:
-                next(it)  # Try to get first entry
-                raise ValueError("Simulated corrupt first entry")
-            except ValueError:
-                pass  # Swallow the simulated error
-            # Yield the rest
-            for entry in it:
-                yield entry
-
-        archive.iter_files = failing_iter
-        return archive
-
-    codec._open = patched_open
-
-    # Should still find wall_d.dds even though brick_d.dds failed
     data = codec.read_inner(p, "textures/wall/wall_d.dds")
     assert data == _dds_bytes(color=(10, 220, 40, 255))
 
-    # Querying brick_d.dds should still raise KeyError (it was skipped)
     with pytest.raises(KeyError, match="no such entry"):
-        codec.read_inner(p, "textures/wall/brick_d.dds")
+        codec.read_inner(p, "textures/wall/corrupt_d.dds")
