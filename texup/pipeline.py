@@ -43,11 +43,22 @@ def _finalize_source(codec, src: Path, game_dir: Path, out_dir: Path,
                       replacements: dict[str, np.ndarray], provisional: list[dict]) -> None:
     """Runs on the background worker thread: encode + write output + cache PNG
     writes + compare sheets for one source. Must not touch the manifest."""
-    blob = codec.encode_file(src, replacements)
-    rel = src.relative_to(game_dir)
-    dst = out_dir / rel
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(blob)
+    if getattr(codec, "loose_output", False):
+        # Read-only containers (e.g. VPK): write each replaced entry as its own
+        # loose file next to the container instead of repacking the whole file.
+        rel_dir = src.parent.relative_to(game_dir)
+        for inner, rgba in replacements.items():
+            orig_bytes = codec.read_inner(src, inner)
+            blob = codec.encode_inner(inner, orig_bytes, rgba)
+            target = out_dir / rel_dir / codec.loose_target(inner)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(blob)
+    else:
+        blob = codec.encode_file(src, replacements)
+        rel = src.relative_to(game_dir)
+        dst = out_dir / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(blob)
     for p in provisional:
         cache_file = p["cache_file"]
         if cache_file is not None:

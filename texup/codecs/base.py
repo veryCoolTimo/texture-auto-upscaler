@@ -44,6 +44,19 @@ class Codec(Protocol):
 
     def encode_file(self, path: Path, replacements: dict[str, np.ndarray]) -> bytes: ...
 
+    # --- Optional "loose output" protocol -----------------------------------
+    # A container that can't be rewritten in place (e.g. VPK: repacking is out
+    # of scope, and multi-chunk archives span sibling files we never touch)
+    # sets `loose_output = True` and implements the three methods below instead
+    # of a meaningful `encode_file` (which should raise UnsupportedTexture).
+    # Call sites use `getattr(codec, "loose_output", False)` so ordinary
+    # single-file codecs need no changes and don't have to implement these.
+    #
+    #   loose_output: bool = False
+    #   def loose_target(self, inner: str) -> str: ...          # rel path under the container's dir
+    #   def encode_inner(self, inner: str, orig_bytes: bytes, rgba: np.ndarray) -> bytes: ...
+    #   def read_inner(self, path: Path, inner: str) -> bytes: ...  # re-read one entry's original bytes
+
 
 _REGISTRY: dict[str, Codec] = {}
 

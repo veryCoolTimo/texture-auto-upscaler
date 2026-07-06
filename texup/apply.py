@@ -48,6 +48,7 @@ def apply_to_game(out_dir: Path, *, force: bool = False) -> dict:
     game_dir = prj.game_dir
     hashes = _manifest_hashes(prj)
     applied_ledger = _load_applied_ledger(game_dir)
+    created = set(applied_ledger.get("created", []))
     stats = {"applied": 0, "skipped": 0}
     for new_file in sorted(out_dir.rglob("*")):
         if not new_file.is_file():
@@ -57,24 +58,38 @@ def apply_to_game(out_dir: Path, *, force: bool = False) -> dict:
                 or rel.name.endswith(".json.bak"):
             continue
         target = game_dir / rel
+        rel_key = rel.as_posix()
+        is_created_loose = rel_key in created
         if not target.exists():
-            stats["skipped"] += 1
+            if target in hashes and not is_created_loose:
+                # Used to exist in the game per the scan manifest but is gone now —
+                # nothing to safely overwrite/backup; leave it to a rescan.
+                stats["skipped"] += 1
+                continue
+            # Brand-new loose file (e.g. a VPK texture written out-of-container):
+            # there is no original in the game dir, so there's nothing to back up.
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(new_file, target)
+            created.add(rel_key)
+            applied_ledger[rel_key] = hashlib.sha256(new_file.read_bytes()).hexdigest()
+            stats["applied"] += 1
             continue
         expected = hashes.get(target)
         actual = hashlib.sha256(target.read_bytes()).hexdigest()
-        rel_key = rel.as_posix()
-        allowed = actual == expected or actual == applied_ledger.get(rel_key) or force
+        allowed = actual == expected or actual == applied_ledger.get(rel_key) or force or is_created_loose
         if not allowed:
             print(f"skip (game file changed since scan): {rel}")
             stats["skipped"] += 1
             continue
-        backup = game_dir / BACKUP_DIR / rel
-        if not backup.exists():
-            backup.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(target, backup)
+        if not is_created_loose:
+            backup = game_dir / BACKUP_DIR / rel
+            if not backup.exists():
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(target, backup)
         shutil.copy2(new_file, target)
         applied_ledger[rel_key] = hashlib.sha256(new_file.read_bytes()).hexdigest()
         stats["applied"] += 1
+    applied_ledger["created"] = sorted(created)
     _save_applied_ledger(game_dir, applied_ledger)
     return stats
 
@@ -93,6 +108,21 @@ def rollback_game(game_dir: Path) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(b, target)
         count += 1
+
+    ledger = _load_applied_ledger(game_dir)
+    for rel_key in ledger.get("created", []):
+        target = game_dir / Path(rel_key)
+        if not target.exists():
+            continue
+        target.unlink()
+        parent = target.parent
+        while parent != game_dir:
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+            parent = parent.parent
+
     ledger_path = _ledger_path(game_dir)
     if ledger_path.exists():
         ledger_path.unlink()

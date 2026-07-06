@@ -29,3 +29,7 @@ register(ZipCodec())
 from texup.codecs.vtf import VtfCodec  # noqa: E402
 
 register(VtfCodec())
+
+from texup.codecs.vpkarc import VpkCodec  # noqa: E402
+
+register(VpkCodec())
