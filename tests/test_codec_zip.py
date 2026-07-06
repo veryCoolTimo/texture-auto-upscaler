@@ -73,3 +73,25 @@ def test_corrupt_inner_image_skipped(tmp_path):
         zf.writestr("broken.png", b"garbage")
     items = ZipCodec().decode(p)
     assert [it.inner_path for it in items] == ["ok.png"]
+
+
+def test_zip_with_dds_entry_roundtrip(tmp_path):
+    from texup.codecs.dds import DdsCodec
+
+    dds_codec = DdsCodec()
+    rgba = np.full((16, 16, 4), 90, dtype=np.uint8)
+    dds_bytes = dds_codec.build_dds(rgba, "DXT5", mip_count=1)
+    p = tmp_path / "t.pk3"
+    with zipfile.ZipFile(p, "w") as zf:
+        zf.writestr("textures/x.dds", dds_bytes, zipfile.ZIP_DEFLATED)
+
+    codec = ZipCodec()
+    items = codec.decode(p)
+    assert items[0].meta["format"] == "DXT5"
+
+    new = np.full((32, 32, 4), 120, dtype=np.uint8)
+    out = codec.encode_file(p, {"textures/x.dds": new})
+    with zipfile.ZipFile(io.BytesIO(out)) as zf:
+        rgba2, meta2 = dds_codec.decode_bytes(zf.read("textures/x.dds"))
+        assert rgba2.shape == (32, 32, 4)
+        assert meta2["format"] == "DXT5"  # формат унаследован от оригинала
