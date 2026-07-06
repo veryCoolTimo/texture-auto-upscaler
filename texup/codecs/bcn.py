@@ -74,6 +74,7 @@ def decode_bcn(data: bytes, w: int, h: int, fmt: str) -> np.ndarray:
         "DXT1": t2d.decode_bc1,
         "DXT5": t2d.decode_bc3,
         "BC5": t2d.decode_bc5,
+        "BC7": t2d.decode_bc7,
     }
     return _bgra_to_rgba(decoders[fmt](data, w, h), w, h)
 
@@ -102,8 +103,12 @@ def encode_bcn(rgba: np.ndarray, fmt: str) -> bytes:
         rg = np.ascontiguousarray(rgba_padded[..., :2])  # (h, w, 2) interleaved RG
         surf = itc.RGBASurface(rg.tobytes(), pw, ph, stride=pw * 2)
     else:
-        # DXT1/DXT5 используют RGBA поверхность (stride = width*4)
+        # DXT1/DXT5/BC7 используют RGBA поверхность (stride = width*4)
         surf = itc.RGBASurface(rgba_padded.tobytes(), pw, ph, stride=pw * 4)
+
+    if fmt == "BC7":
+        settings = itc.BC7EncSettings.from_profile("alpha_slow")
+        return bytes(itc.compress_blocks_bc7(surf, settings))
 
     encoders = {
         "DXT1": itc.compress_blocks_bc1,
