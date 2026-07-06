@@ -21,3 +21,7 @@ register(MtfTexCodec())
 from texup.codecs.mtframework import MtfArcCodec  # noqa: E402
 
 register(MtfArcCodec())
+
+from texup.codecs.ziparc import ZipCodec  # noqa: E402
+
+register(ZipCodec())
