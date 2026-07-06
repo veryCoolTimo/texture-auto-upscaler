@@ -66,6 +66,18 @@ def rollback(game_dir: Path):
 
 
 @app.command()
+def bench():
+    """Calibrate this machine: measure model throughput for honest ETAs."""
+    from texup.bench import run_bench
+
+    typer.echo("Benchmarking models on this machine (~1 min, downloads models on first use)...")
+    data = run_bench()
+    typer.echo(f"device: {data['device']}")
+    for name, rate in data["rates"].items():
+        typer.echo(f"  {name}: {rate} Mpx/s")
+
+
+@app.command()
 def preview(texture: Path, max_size: int = 4096):
     """Upscale a single texture file, write before/after PNGs next to it."""
     from PIL import Image
