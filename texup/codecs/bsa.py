@@ -49,7 +49,14 @@ class BsaCodec:
     def decode(self, path: Path) -> list[TextureItem]:
         items: list[TextureItem] = []
         archive = self._open(path)
-        for entry in archive.iter_files():
+        it = iter(archive.iter_files())
+        while True:
+            try:
+                entry = next(it)
+            except StopIteration:
+                break
+            except Exception:  # noqa: BLE001 — битая/непонятно сжатая запись: пропускаем, не роняем архив
+                continue
             inner = entry.filepath.as_posix()
             if not inner.lower().endswith(".dds"):
                 continue
@@ -69,7 +76,14 @@ class BsaCodec:
         rebuild the DDS around the upscaled pixels (encode_inner needs the
         original header, and decode() doesn't keep raw bytes around)."""
         archive = self._open(path)
-        for entry in archive.iter_files():
+        it = iter(archive.iter_files())
+        while True:
+            try:
+                entry = next(it)
+            except StopIteration:
+                break
+            except Exception:  # noqa: BLE001 — пропускаем битую запись
+                continue
             if entry.filepath.as_posix() == inner:
                 return entry.data
         raise KeyError(f"no such entry {inner!r} in {path}")

@@ -235,3 +235,73 @@ def test_apply_creates_loose_files_and_rollback_deletes(tmp_path):
     assert not (game / "textures").exists()
     # The BSA container itself was never touched.
     assert bsa_path.read_bytes() == original_bsa_bytes
+
+
+def test_decode_resilience_skips_bad_entry(tmp_path):
+    """Monkeypatch iter_files to yield one good entry, then raise on the
+    second advance. Verify decode() returns the one good item and doesn't
+    abort the entire archive scan."""
+    p = _make_bsa_file(tmp_path)
+    codec = BsaCodec()
+
+    # Monkeypatch archive.iter_files to fail mid-iteration
+    original_open = codec._open
+
+    def patched_open(path: Path):
+        archive = original_open(path)
+        original_iter = archive.iter_files
+
+        def failing_iter():
+            """Yield one entry, then raise on the next advance."""
+            it = original_iter()
+            yield next(it)  # Yield the first entry (brick_d.dds)
+            raise ValueError("Simulated corrupt entry during iteration")
+
+        archive.iter_files = failing_iter
+        return archive
+
+    codec._open = patched_open
+    items = codec.decode(p)
+
+    # Even though the second entry fails, we should have decoded the first
+    assert len(items) == 1
+    assert items[0].inner_path == "textures/wall/brick_d.dds"
+
+
+def test_read_inner_resilience_skips_bad_entry(tmp_path):
+    """Verify read_inner() survives a bad entry during iteration and can
+    still retrieve a later good entry."""
+    p = _make_bsa_file(tmp_path)
+    codec = BsaCodec()
+
+    # Monkeypatch archive.iter_files to fail on the first entry, succeed on the second
+    original_open = codec._open
+
+    def patched_open(path: Path):
+        archive = original_open(path)
+        original_iter = archive.iter_files
+
+        def failing_iter():
+            """Raise on the first advance, then yield remaining entries."""
+            it = original_iter()
+            try:
+                next(it)  # Try to get first entry
+                raise ValueError("Simulated corrupt first entry")
+            except ValueError:
+                pass  # Swallow the simulated error
+            # Yield the rest
+            for entry in it:
+                yield entry
+
+        archive.iter_files = failing_iter
+        return archive
+
+    codec._open = patched_open
+
+    # Should still find wall_d.dds even though brick_d.dds failed
+    data = codec.read_inner(p, "textures/wall/wall_d.dds")
+    assert data == _dds_bytes(color=(10, 220, 40, 255))
+
+    # Querying brick_d.dds should still raise KeyError (it was skipped)
+    with pytest.raises(KeyError, match="no such entry"):
+        codec.read_inner(p, "textures/wall/brick_d.dds")
