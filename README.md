@@ -66,6 +66,15 @@ texup is format-driven, not game-driven: any game whose textures it can decode, 
 
 Verification standard: every codec is validated against a full real installation before it's called supported — RE5: 645/645 loose textures byte-exact, 1231/1232 archives repack byte-identical; RE0 HD: 10,454 textures parse with exact size match. Codecs are plugins — a new engine is one file implementing `detect / decode / encode_file`.
 
+## Use with Claude Code
+
+Don't want to touch a terminal? Install the skill and just say *"remaster the textures in my game"* — Claude runs texup for you, shows you the before/after sheets, and applies (with backup) once you approve:
+
+```
+/plugin marketplace add veryCoolTimo/texture-auto-upscaler
+/plugin install texup-skill@texup
+```
+
 ## Under the hood
 
 | Layer | Support |

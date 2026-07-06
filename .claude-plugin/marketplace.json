@@ -1,0 +1,20 @@
+{
+  "name": "texup",
+  "description": "Marketplace for the texup texture-remaster skill",
+  "owner": {
+    "name": "veryCoolTimo",
+    "email": "timofeigrm@gmail.com"
+  },
+  "plugins": [
+    {
+      "name": "texup-skill",
+      "description": "Drive texup — a local AI texture remaster tool for old games — conversationally. Scans a game folder, classifies and upscales textures, packs them back, with backup and rollback. No terminal knowledge needed.",
+      "version": "1.0.0",
+      "source": "./",
+      "author": {
+        "name": "veryCoolTimo",
+        "email": "timofeigrm@gmail.com"
+      }
+    }
+  ]
+}
