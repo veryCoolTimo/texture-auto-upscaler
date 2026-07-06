@@ -13,6 +13,7 @@ dependencies = [
     "ispc_texcomp>=1.0.1",
     "texture2ddecoder>=1.0.5",
     "vpk>=1.4",
+    "bethesda-structs>=0.1.4",
 ]
 
 [project.optional-dependencies]
