@@ -41,7 +41,8 @@ def _fmt_eta(sec: float | None) -> str:
 def run_remaster(game_dir: Path, out_dir: Path | None, *,
                   ask: Callable[[str, list[str], str], str] = rich_ask,
                   engine_factory=load_upscaler,
-                  bench_runner=run_bench) -> int:
+                  bench_runner=run_bench,
+                  bench_loader=load_bench) -> int:
     game_dir = Path(game_dir)
     out_dir = Path(out_dir) if out_dir else Path.cwd() / f"texup-out-{game_dir.name}"
 
@@ -72,10 +73,15 @@ def run_remaster(game_dir: Path, out_dir: Path | None, *,
     # 3. questions (only on first run — skipped once answers are persisted)
     answers = dict(prj.wizard)
     if "preset" not in answers:
-        bench_data = load_bench()
+        bench_data = bench_loader()
         if bench_data is None:
-            console.print("[dim]No hardware calibration found — calibrating now (~1 min)...[/dim]")
-            bench_data = bench_runner()
+            console.print("[dim]No hardware calibration found — calibrating now "
+                          "(~1 min; downloads models on first run)...[/dim]")
+            try:
+                bench_data = bench_runner()
+            except Exception as e:  # noqa: BLE001 — сеть/скачивание; деградируем без оценок
+                console.print(f"[yellow]Calibration failed ({e}); continuing without time estimates.[/yellow]")
+                bench_data = None
         for name in PRESETS:
             eta = estimate_seconds(prj, name, bench_data) if bench_data else None
             console.print(f"  [bold]{name}[/bold]: {_fmt_eta(eta)}")

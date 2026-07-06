@@ -68,3 +68,17 @@ def test_second_run_skips_questions(tmp_path):
     code = run_remaster(game, out, ask=boom,
                         engine_factory=fake_factory, bench_runner=fake_bench)
     assert code == 0
+
+
+def test_bench_failure_degrades_gracefully(tmp_path):
+    game = _game(tmp_path)
+    out = tmp_path / "out"
+
+    def failing_bench(**kw):
+        raise OSError("network down")
+
+    answers = iter(["detailed", "folder"])
+    code = run_remaster(game, out, ask=lambda q, c, d: next(answers),
+                        engine_factory=fake_factory, bench_runner=failing_bench,
+                        bench_loader=lambda: None)
+    assert code == 0

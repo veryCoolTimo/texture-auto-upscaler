@@ -47,7 +47,9 @@ def test_sample_limits_per_class(tmp_path):
     assert stats["done"] == 3  # 2 diffuse + 1 normal
     assert len(prj.records(status="pending")) == 3
     compare_files = list((out / "_compare").rglob("*.png"))
-    assert len(compare_files) == 3
+    # Only 2 compare files: 1 fresh diffuse + 1 normal
+    # (second sampled diffuse is cache hit, so skipped from compare sheets)
+    assert len(compare_files) == 2
 
 
 def test_only_filter(tmp_path):
@@ -236,3 +238,19 @@ def test_batch_post_hook_failure_isolated_from_siblings(tmp_path, monkeypatch):
     failed = prj.records(status="failed")
     assert len(failed) == 1
     assert failed[0]["key"].endswith("tex1_n")
+
+
+def test_compare_sheets_skip_cache_hits(tmp_path):
+    game = tmp_path / "game"
+    game.mkdir()
+    rgba = np.random.default_rng(0).integers(0, 255, (8, 8, 4), dtype=np.uint8)
+    rgba[..., 3] = 255
+    Image.fromarray(rgba, "RGBA").save(game / "tex0_d.png")
+    Image.fromarray(rgba, "RGBA").save(game / "tex1_d.png")  # same content
+    out = tmp_path / "out"
+    prj = scan_game(game, out)
+
+    stats = process(prj, out, engine_factory=fake_factory, compare=True, compare_limit=5)
+    assert stats["done"] == 2
+    compare_files = list((out / "_compare").rglob("*.png"))
+    assert len(compare_files) == 1  # only the fresh one, not the cache hit

@@ -134,7 +134,7 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                 replacements[inner] = up
                 klass = r["klass"]
                 write_compare = False
-                if compare and (compare_limit is None or compare_counts[klass] < compare_limit):
+                if compare and not cache_hit and (compare_limit is None or compare_counts[klass] < compare_limit):
                     write_compare = True
                     compare_counts[klass] += 1
                 provisional.append({
