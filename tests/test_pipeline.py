@@ -116,3 +116,36 @@ def test_encode_failure_rolls_back_done_records(tmp_path, monkeypatch):
     assert stats["done"] == 0
     assert stats["failed"] == 3
     assert all(r["status"] == "failed" for r in prj.records())
+
+
+def test_encode_failure_then_next_source_still_processes(tmp_path, monkeypatch):
+    # With the overlapped pipeline, a finalize (encode) failure for one source
+    # must roll back only that source's records while the NEXT source (whose
+    # GPU work overlapped with the failing finalize) still completes fine.
+    game = _game(tmp_path, n_diffuse=2)
+    out = tmp_path / "out"
+    prj = scan_game(game, out)
+
+    from texup.codecs import get_codec
+    codec = get_codec("standard")
+    original_encode_file = type(codec).encode_file
+    failing_src = game / "tex0_d.png"
+
+    def flaky_encode_file(self, path, repl):
+        if path == failing_src:
+            raise RuntimeError("boom")
+        return original_encode_file(self, path, repl)
+
+    monkeypatch.setattr(type(codec), "encode_file", flaky_encode_file)
+    stats = process(prj, out, engine_factory=fake_factory)
+
+    assert stats["failed"] == 1
+    assert stats["done"] == 2
+    failed = prj.records(status="failed")
+    assert len(failed) == 1
+    assert failed[0]["key"] == str(failing_src)
+    done_keys = {r["key"] for r in prj.records(status="done")}
+    assert done_keys == {str(game / "tex1_d.png"), str(game / "wall_n.png")}
+    assert (out / "tex1_d.png").exists()
+    assert (out / "wall_n.png").exists()
+    assert not (out / "tex0_d.png").exists()

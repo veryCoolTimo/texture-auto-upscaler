@@ -155,7 +155,7 @@ def build_arc(version: int, entries: list[tuple[str, int, bytes]],
     for i, (name, type_hash, raw) in enumerate(entries):
         if len(name.encode("ascii")) >= 64:
             raise ValueError(f"entry name too long: {name!r}")
-        comp = precompressed.get(i) or zlib.compress(raw, 9)
+        comp = precompressed.get(i) or zlib.compress(raw, 6)
         blobs.append((name, type_hash, comp, uncomp_sizes.get(i, len(raw))))
     header_size = 8 + len(blobs) * 80
     pos = max(header_size, data_start) if data_start else header_size
