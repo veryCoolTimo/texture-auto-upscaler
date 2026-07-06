@@ -108,6 +108,17 @@ def test_arc_repack_with_duplicate_names(tmp_path):
     assert codec.encode_file(p, {}) == blob
 
 
+def test_arc_repack_preserves_zero_length_entry(tmp_path):
+    entries = [
+        ("empty\\entry", 0x33333333, b""),
+        ("normal\\entry", ARC_TEXTURE_HASH, b"payload"),
+    ]
+    blob = build_arc(7, entries)
+    p = tmp_path / "z.arc"
+    p.write_bytes(blob)
+    assert MtfArcCodec().encode_file(p, {}) == blob
+
+
 @pytest.mark.skipif(not RE5, reason="TEXUP_RE5_DIR not set")
 def test_real_arc_repack_identical():
     import glob
