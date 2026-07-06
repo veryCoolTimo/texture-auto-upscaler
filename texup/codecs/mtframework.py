@@ -89,7 +89,7 @@ def build_tex(info: TexInfo, rgba: np.ndarray) -> bytes:
 #   0x10 mip_count x u32 absolute file offsets (same semantics as v1, just no 16-byte
 #        float preamble before the offset table)
 #   then tightly-packed mip chain (block-compressed or raw, same layout as v1)
-TEX2_VERSION = 157  # 0x09D
+_TEX2_VERSIONS = {157, 154}  # 157 = RE0/RE1 HD (0x09D), 154 = RE6 (0x9A)
 # format_id -> block/pixel codec. Multiple ids can share a codec (e.g. 20/25 both BC1 —
 # likely sRGB vs linear DXGI variants of the same bit layout; we don't do gamma handling
 # so both decode identically). format_id itself is preserved verbatim on rebuild.
@@ -173,13 +173,13 @@ def build_tex2(info: Tex2Info, rgba: np.ndarray) -> bytes:
 
 
 def parse_tex_any(data: bytes) -> TexInfo | Tex2Info:
-    """Dispatch on the low-12-bit version field: 112 -> v1 (RE5), 157 -> v2 (RE0/RE1 HD)."""
+    """Dispatch on the low-12-bit version field: 112 -> v1 (RE5), 157/154 -> v2 (RE0/RE1 HD/RE6)."""
     if data[:4] != TEX_MAGIC:
         raise UnsupportedTexture("not a TEX")
     if len(data) < 8:
         raise UnsupportedTexture("truncated TEX header")
     version_u32, = struct.unpack_from("<I", data, 4)
-    if (version_u32 & 0xFFF) == TEX2_VERSION:
+    if (version_u32 & 0xFFF) in _TEX2_VERSIONS:
         return parse_tex2(data)
     return parse_tex(data)
 

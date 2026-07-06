@@ -66,6 +66,20 @@ def test_version_flags_preserved_verbatim():
     assert info.version == version
 
 
+def test_synthetic_version_154_re6():
+    # RE6 uses version 154 (0x9A) instead of 157, but same v2 layout.
+    # Verify that the dispatcher routes it to parse_tex2 and round-trips correctly.
+    from texup.codecs.mtframework import parse_tex_any
+    rgba = np.random.default_rng(10).integers(0, 255, (16, 32, 4), dtype=np.uint8)
+    version_154 = 154  # RE6 version
+    blob = build_tex2(_info(32, 16, "DXT1", 20, 5, version=version_154), rgba)
+    # Verify parse_tex_any dispatches to v2 path
+    info = parse_tex_any(blob)
+    assert info.version == version_154
+    assert (info.width, info.height, info.fmt, info.mip_count) == (32, 16, "DXT1", 6)
+    assert info.format_id == 20
+
+
 def test_format_id_and_upper16_preserved_on_rebuild(tmp_path):
     rgba = np.random.default_rng(5).integers(0, 255, (8, 8, 4), dtype=np.uint8)
     blob = build_tex2(_info(8, 8, "DXT1", 25, 1, packed2_upper=0x1234), rgba)
