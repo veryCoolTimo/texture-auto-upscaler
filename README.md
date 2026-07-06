@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/banner.png" alt="texup — AI texture remaster for old games" width="100%">
+  <img src="assets/banner.webp" alt="texup — AI texture remaster for old games" width="100%">
 </p>
 
 # texup
