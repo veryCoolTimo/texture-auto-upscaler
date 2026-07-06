@@ -11,6 +11,7 @@ from PIL import Image
 
 from texup.codecs import get_codec
 from texup.engine import Upscaler, load_upscaler
+from texup.presets import DEFAULT_PRESET
 from texup.project import Project
 from texup.router import resize_classic, route_for
 
@@ -60,7 +61,7 @@ def _finalize_source(codec, src: Path, game_dir: Path, out_dir: Path,
 def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
             sample: int | None = None, max_size: int = 4096,
             engine_factory: Callable[[str], Upscaler] = load_upscaler,
-            compare: bool = False) -> dict:
+            compare: bool = False, preset: str = DEFAULT_PRESET) -> dict:
     out_dir = Path(out_dir)
     cache_dir = out_dir / "_upcache"
     pending = prj.records(status="pending")
@@ -136,7 +137,7 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                 _, inner = Project.source_of(r["key"])
                 try:
                     item = items[inner]
-                    route = route_for(r["klass"], item)
+                    route = route_for(r["klass"], item, preset)
                     content_sha = item.meta.get("content_sha")
                     cache_file = (
                         _cache_path(cache_dir, content_sha, route.model, max_size)

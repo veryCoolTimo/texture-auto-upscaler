@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from texup.codecs.base import TextureItem
+from texup.presets import DEFAULT_PRESET, PRESETS
 
 
 @dataclass
@@ -51,7 +52,7 @@ def mtf_ag_pack(rgba: np.ndarray) -> np.ndarray:
     return out
 
 
-def route_for(klass: str, item: TextureItem) -> Route:
+def route_for(klass: str, item: TextureItem, preset: str = DEFAULT_PRESET) -> Route:
     if klass == "normal":
         if item.meta.get("tex") and item.meta.get("format") == "DXT5":
             return Route("normal-rg0-bc1", pre=mtf_ag_unpack, post=mtf_ag_pack)
@@ -61,4 +62,5 @@ def route_for(klass: str, item: TextureItem) -> Route:
     if klass == "skip":
         return Route(None)
     # diffuse, material, ui
-    return Route("remacri")
+    mapping = PRESETS[preset]
+    return Route(mapping[klass])
