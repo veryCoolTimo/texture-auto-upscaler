@@ -40,8 +40,7 @@ BATCH = 8
 
 
 def _finalize_source(codec, src: Path, game_dir: Path, out_dir: Path,
-                      replacements: dict[str, np.ndarray], provisional: list[dict],
-                      compare: bool) -> None:
+                      replacements: dict[str, np.ndarray], provisional: list[dict]) -> None:
     """Runs on the background worker thread: encode + write output + cache PNG
     writes + compare sheets for one source. Must not touch the manifest."""
     blob = codec.encode_file(src, replacements)
@@ -54,14 +53,16 @@ def _finalize_source(codec, src: Path, game_dir: Path, out_dir: Path,
         if cache_file is not None:
             cache_file.parent.mkdir(parents=True, exist_ok=True)
             Image.fromarray(p["up"], "RGBA").save(cache_file, compress_level=1)
-        if compare:
+        if p["compare"]:
             _write_compare(out_dir, p["klass"], p["key"], p["before"], p["up"])
 
 
 def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
             sample: int | None = None, max_size: int = 4096,
             engine_factory: Callable[[str], Upscaler] = load_upscaler,
-            compare: bool = False, preset: str = DEFAULT_PRESET) -> dict:
+            compare: bool = False, preset: str = DEFAULT_PRESET,
+            on_texture: Callable[[dict], None] | None = None,
+            compare_limit: int | None = None) -> dict:
     out_dir = Path(out_dir)
     cache_dir = out_dir / "_upcache"
     pending = prj.records(status="pending")
@@ -74,9 +75,16 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                 by_class[r["klass"]].append(r)
         pending = [r for rs in by_class.values() for r in rs]
 
+    total_planned = len(pending)
     engines: dict[str, Upscaler] = {}
     stats = {"done": 0, "failed": 0, "skipped": 0}
     mem_cache: dict[Path, np.ndarray] = {}
+    compare_counts: dict[str, int] = defaultdict(int)
+
+    def _emit(cache_hit: bool) -> None:
+        if on_texture is not None:
+            on_texture({"done": stats["done"], "failed": stats["failed"],
+                        "total": total_planned, "cache_hit": cache_hit})
 
     by_source: dict[Path, list[dict]] = defaultdict(list)
     for r in pending:
@@ -93,10 +101,12 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
             for p in provisional:
                 prj.set_status(p["key"], "failed", reason=f"encode: {e}")
                 stats["failed"] += 1
+                _emit(p["cache_hit"])
         else:
             for p in provisional:
                 prj.set_status(p["key"], "done", model=p["model"])
                 stats["done"] += 1
+                _emit(p["cache_hit"])
         prj.save()
 
     pending_finalize: tuple[Future, list[dict]] | None = None
@@ -110,6 +120,7 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                 for r in recs:
                     prj.set_status(r["key"], "failed", reason=f"decode: {e}")
                     stats["failed"] += 1
+                    _emit(False)
                 prj.save()
                 continue
 
@@ -117,17 +128,24 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
             provisional: list[dict] = []
 
             def _record_result(r: dict, inner: str, item, route, up: np.ndarray,
-                                cache_file: Path | None, fresh: bool) -> None:
+                                cache_file: Path | None, fresh: bool, cache_hit: bool) -> None:
                 if fresh and cache_file is not None:
                     mem_cache[cache_file] = up
                 replacements[inner] = up
+                klass = r["klass"]
+                write_compare = False
+                if compare and (compare_limit is None or compare_counts[klass] < compare_limit):
+                    write_compare = True
+                    compare_counts[klass] += 1
                 provisional.append({
                     "key": r["key"],
                     "model": route.model,
-                    "klass": r["klass"],
+                    "klass": klass,
                     "up": up,
-                    "before": item.pixels if compare else None,
+                    "before": item.pixels if write_compare else None,
                     "cache_file": cache_file if fresh else None,
+                    "compare": write_compare,
+                    "cache_hit": cache_hit,
                 })
 
             # Items eligible for batching (same model, fit in one tile, no cache hit)
@@ -144,14 +162,14 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                         if content_sha else None
                     )
                     if cache_file is not None and cache_file in mem_cache:
-                        _record_result(r, inner, item, route, mem_cache[cache_file], cache_file, False)
+                        _record_result(r, inner, item, route, mem_cache[cache_file], cache_file, False, True)
                     elif cache_file is not None and cache_file.exists():
                         up = np.asarray(Image.open(cache_file).convert("RGBA"))
                         mem_cache[cache_file] = up
-                        _record_result(r, inner, item, route, up, cache_file, False)
+                        _record_result(r, inner, item, route, up, cache_file, False, True)
                     elif route.model is None:
                         up = resize_classic(item.pixels, 4)
-                        _record_result(r, inner, item, route, up, cache_file, cache_file is not None)
+                        _record_result(r, inner, item, route, up, cache_file, cache_file is not None, False)
                     else:
                         if route.model not in engines:
                             engines[route.model] = engine_factory(route.model)
@@ -167,10 +185,11 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                             up = engine.run(px, max_size=max_size)
                             if route.post:
                                 up = route.post(up)
-                            _record_result(r, inner, item, route, up, cache_file, cache_file is not None)
+                            _record_result(r, inner, item, route, up, cache_file, cache_file is not None, False)
                 except Exception as e:  # noqa: BLE001
                     prj.set_status(r["key"], "failed", reason=str(e))
                     stats["failed"] += 1
+                    _emit(False)
 
             for key in sorted(batch_groups):
                 entries = batch_groups[key]
@@ -183,6 +202,7 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                         for c in chunk:
                             prj.set_status(c["r"]["key"], "failed", reason=str(e))
                             stats["failed"] += 1
+                            _emit(False)
                         continue
                     for c, up in zip(chunk, ups):
                         try:
@@ -191,11 +211,12 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                                 up = route.post(up)
                             _record_result(
                                 c["r"], c["inner"], c["item"], route, up,
-                                c["cache_file"], c["cache_file"] is not None,
+                                c["cache_file"], c["cache_file"] is not None, False,
                             )
                         except Exception as e:  # noqa: BLE001
                             prj.set_status(c["r"]["key"], "failed", reason=str(e))
                             stats["failed"] += 1
+                            _emit(False)
 
             if replacements:
                 # Surface the previous source's finalize errors before handing off
@@ -203,7 +224,7 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                 resolve_pending(pending_finalize)
                 future = executor.submit(
                     _finalize_source, codec, src, prj.game_dir, out_dir,
-                    replacements, provisional, compare,
+                    replacements, provisional,
                 )
                 pending_finalize = (future, provisional)
             else:

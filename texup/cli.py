@@ -58,6 +58,14 @@ def apply(out: Path, force: bool = typer.Option(False, help="Apply even if game 
 
 
 @app.command()
+def remaster(game_dir: str, out: str = typer.Option(None, help="Output folder (default: ./texup-out-<game>)")):
+    """One command: scan -> a couple of questions -> silent run with progress."""
+    from texup.wizard import run_remaster
+
+    raise typer.Exit(run_remaster(Path(game_dir), Path(out) if out else None))
+
+
+@app.command()
 def rollback(game_dir: Path):
     """Restore original files from .texup-backup."""
     from texup.apply import rollback_game

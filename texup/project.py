@@ -10,10 +10,12 @@ MANIFEST_NAME = "texup-project.json"
 class Project:
     _STATUSES = ("pending", "done", "failed", "skipped")
 
-    def __init__(self, game_dir: Path, out_dir: Path, textures: dict[str, dict]):
+    def __init__(self, game_dir: Path, out_dir: Path, textures: dict[str, dict],
+                 wizard: dict | None = None):
         self.game_dir = Path(game_dir)
         self.out_dir = Path(out_dir)
         self._textures = textures
+        self._wizard: dict = dict(wizard) if wizard else {}
 
     @classmethod
     def create(cls, game_dir: Path, out_dir: Path) -> "Project":
@@ -27,7 +29,15 @@ class Project:
     def load(cls, out_dir: Path) -> "Project":
         out_dir = Path(out_dir)
         data = json.loads((out_dir / MANIFEST_NAME).read_text())
-        return cls(Path(data["game_dir"]), out_dir, data["textures"])
+        return cls(Path(data["game_dir"]), out_dir, data["textures"], data.get("wizard", {}))
+
+    @property
+    def wizard(self) -> dict:
+        return dict(self._wizard)
+
+    def set_wizard(self, answers: dict) -> None:
+        self._wizard.update(answers)
+        self.save()
 
     def add_texture(self, key: str, *, codec: str, klass: str, confidence: float,
                     sha256: str, width: int, height: int, fmt: str, content_sha: str | None = None) -> None:
@@ -58,7 +68,8 @@ class Project:
         return out
 
     def save(self) -> None:
-        payload = {"game_dir": str(self.game_dir), "textures": self._textures}
+        payload = {"game_dir": str(self.game_dir), "textures": self._textures,
+                   "wizard": self._wizard}
         target = self.out_dir / MANIFEST_NAME
         tmp = target.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(payload, indent=1))

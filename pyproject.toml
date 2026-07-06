@@ -5,6 +5,7 @@ description = "Auto-remaster game textures: scan, classify, upscale, repack"
 requires-python = ">=3.11"
 dependencies = [
     "typer>=0.16",
+    "rich>=13",
     "numpy>=1.26",
     "pillow>=10.3",
     "torch>=2.3",
