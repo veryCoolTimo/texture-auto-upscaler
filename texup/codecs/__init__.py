@@ -37,3 +37,7 @@ register(VpkCodec())
 from texup.codecs.bsa import BsaCodec  # noqa: E402
 
 register(BsaCodec())
+
+from texup.codecs.ba2 import Ba2Codec  # noqa: E402
+
+register(Ba2Codec())
