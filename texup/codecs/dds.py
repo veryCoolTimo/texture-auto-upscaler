@@ -55,11 +55,21 @@ class DdsCodec:
             raise UnsupportedTexture("unknown DDS pixel format")
         return w, h, mips, fmt, 128
 
-    def decode(self, path: Path) -> list[TextureItem]:
-        data = path.read_bytes()
+    def decode_bytes(self, data: bytes) -> tuple[np.ndarray, dict]:
         w, h, mips, fmt, off = self._parse(data)
         rgba = decode_bcn(data[off : off + bcn_size(w, h, fmt)], w, h, fmt)
-        meta = {"format": fmt, "mip_count": mips, "content_sha": hashlib.sha256(data).hexdigest()}
+        return rgba, {"format": fmt, "mip_count": mips}
+
+    def encode_bytes(self, data_orig: bytes, rgba: np.ndarray) -> bytes:
+        _, _, mips, fmt, _ = self._parse(data_orig)
+        h, w = rgba.shape[:2]
+        new_mips = mip_levels_for(w, h) if mips > 1 else 1
+        return self.build_dds(rgba, fmt, new_mips)
+
+    def decode(self, path: Path) -> list[TextureItem]:
+        data = path.read_bytes()
+        rgba, meta = self.decode_bytes(data)
+        meta["content_sha"] = hashlib.sha256(data).hexdigest()
         return [TextureItem(path, None, self.name, rgba, meta)]
 
     def build_dds(self, rgba: np.ndarray, fmt: str, mip_count: int) -> bytes:
@@ -86,8 +96,4 @@ class DdsCodec:
 
     def encode_file(self, path: Path, replacements: dict[str, np.ndarray]) -> bytes:
         data = path.read_bytes()
-        _, _, mips, fmt, _ = self._parse(data)
-        rgba = replacements[""]
-        h, w = rgba.shape[:2]
-        new_mips = mip_levels_for(w, h) if mips > 1 else 1
-        return self.build_dds(rgba, fmt, new_mips)
+        return self.encode_bytes(data, replacements[""])
