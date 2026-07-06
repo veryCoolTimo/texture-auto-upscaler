@@ -76,6 +76,126 @@ def build_tex(info: TexInfo, rgba: np.ndarray) -> bytes:
     return head + b"".join(blobs)
 
 
+# --- TEX v2 (MT Framework v2, e.g. Resident Evil 0/1 HD) ---
+# ARC container is byte-identical to v1 (magic/entries/hash/zlib/data-start); only the TEX
+# payload header differs. Header layout, discovered empirically by size math across the
+# full RE0 texture set (10k+ files, exact payload-size match):
+#   0x00 magic "TEX\0"
+#   0x04 u32 version; (v & 0xFFF) is the version number (157 for RE0), remaining bits are
+#        flags — preserved verbatim on rebuild.
+#   0x08 u32 packed: mip_count = v&0x3F, width = (v>>6)&0x1FFF, height = (v>>19)&0x1FFF
+#   0x0C u32 packed: image_count = v&0xFF (6 = cubemap, unsupported),
+#        format_id = (v>>8)&0xFF, upper 16 bits unknown — preserved verbatim
+#   0x10 mip_count x u32 absolute file offsets (same semantics as v1, just no 16-byte
+#        float preamble before the offset table)
+#   then tightly-packed mip chain (block-compressed or raw, same layout as v1)
+TEX2_VERSION = 157  # 0x09D
+# format_id -> block/pixel codec. Multiple ids can share a codec (e.g. 20/25 both BC1 —
+# likely sRGB vs linear DXGI variants of the same bit layout; we don't do gamma handling
+# so both decode identically). format_id itself is preserved verbatim on rebuild.
+_FMT2_FROM_ID = {
+    20: "DXT1",  # BC1, _BM diffuse (opaque)
+    24: "DXT5",  # BC3, _BM diffuse (alpha)
+    25: "DXT1",  # BC1, _MM/_AM (metalness/AO, single-channel content in a BC1 container)
+    31: "BC5",   # _NM normal maps
+    43: "BC7",   # UI/photographic (_ID_HQ icons, logos — confirmed via CAPCOM logo decode)
+    14: "RGBA8", # uncompressed 32bpp (e.g. *_z depth-ish room textures)
+    39: "RGBA8", # uncompressed 32bpp (TVNoise/TVMask filter textures)
+    40: "RGBA8", # uncompressed 32bpp (NullBlack/NullWhite, *_ID_HQ save icons)
+}
+
+
+@dataclass
+class Tex2Info:
+    version: int  # full u32 at 0x04, preserved verbatim
+    mip_count: int
+    width: int
+    height: int
+    image_count: int
+    format_id: int
+    packed2_upper: int  # bits 16-31 of the packed u32 at 0x0C, unknown, preserved verbatim
+    fmt: str
+
+
+def parse_tex2(data: bytes) -> Tex2Info:
+    if data[:4] != TEX_MAGIC:
+        raise UnsupportedTexture("not a TEX")
+    if len(data) < 0x10:
+        raise UnsupportedTexture("truncated TEX2 header")
+    version, = struct.unpack_from("<I", data, 4)
+    packed1, = struct.unpack_from("<I", data, 8)
+    mip_count = packed1 & 0x3F
+    width = (packed1 >> 6) & 0x1FFF
+    height = (packed1 >> 19) & 0x1FFF
+    packed2, = struct.unpack_from("<I", data, 0xC)
+    image_count = packed2 & 0xFF
+    format_id = (packed2 >> 8) & 0xFF
+    upper16 = (packed2 >> 16) & 0xFFFF
+    if image_count != 1:
+        raise UnsupportedTexture(f"tex2 image_count={image_count} (cubemap?)")
+    if mip_count == 0:
+        raise UnsupportedTexture("tex2 mip_count=0")
+    if format_id not in _FMT2_FROM_ID:
+        raise UnsupportedTexture(f"tex2 format id {format_id}")
+    header_size = 0x10 + 4 * mip_count
+    if len(data) < header_size:
+        raise UnsupportedTexture("truncated TEX2 offset table")
+    return Tex2Info(version, mip_count, width, height, image_count, format_id, upper16,
+                     _FMT2_FROM_ID[format_id])
+
+
+def tex2_pixels(data: bytes, info: Tex2Info) -> np.ndarray:
+    offs = struct.unpack_from(f"<{info.mip_count}I", data, 0x10)
+    size = bcn_size(info.width, info.height, info.fmt)
+    return decode_bcn(data[offs[0] : offs[0] + size], info.width, info.height, info.fmt)
+
+
+def build_tex2(info: Tex2Info, rgba: np.ndarray) -> bytes:
+    h, w = rgba.shape[:2]
+    if w > 0x1FFF or h > 0x1FFF:
+        raise ValueError("dimensions exceed 13-bit field")
+    # Мип-семантика как у v1: multi-mip исходник получает полную цепочку под новые
+    # размеры; одномиповый остаётся одномиповым.
+    mips = mip_levels_for(w, h) if info.mip_count > 1 else 1
+    blobs = [encode_bcn(m, info.fmt) for m in build_mip_chain(rgba, mips)]
+    header_size = 0x10 + 4 * mips
+    offsets, pos = [], header_size
+    for b in blobs:
+        offsets.append(pos)
+        pos += len(b)
+    packed1 = mips | (w << 6) | (h << 19)
+    packed2 = info.image_count | (info.format_id << 8) | (info.packed2_upper << 16)
+    head = TEX_MAGIC + struct.pack("<I", info.version)
+    head += struct.pack("<I", packed1)
+    head += struct.pack("<I", packed2)
+    head += struct.pack(f"<{mips}I", *offsets)
+    return head + b"".join(blobs)
+
+
+def parse_tex_any(data: bytes) -> TexInfo | Tex2Info:
+    """Dispatch on the low-12-bit version field: 112 -> v1 (RE5), 157 -> v2 (RE0/RE1 HD)."""
+    if data[:4] != TEX_MAGIC:
+        raise UnsupportedTexture("not a TEX")
+    if len(data) < 8:
+        raise UnsupportedTexture("truncated TEX header")
+    version_u32, = struct.unpack_from("<I", data, 4)
+    if (version_u32 & 0xFFF) == TEX2_VERSION:
+        return parse_tex2(data)
+    return parse_tex(data)
+
+
+def tex_pixels_any(data: bytes, info: TexInfo | Tex2Info) -> np.ndarray:
+    if isinstance(info, Tex2Info):
+        return tex2_pixels(data, info)
+    return tex_pixels(data, info)
+
+
+def build_tex_any(info: TexInfo | Tex2Info, rgba: np.ndarray) -> bytes:
+    if isinstance(info, Tex2Info):
+        return build_tex2(info, rgba)
+    return build_tex(info, rgba)
+
+
 class MtfTexCodec:
     name = "mtf-tex"
 
@@ -90,8 +210,8 @@ class MtfTexCodec:
 
     def decode(self, path: Path) -> list[TextureItem]:
         data = path.read_bytes()
-        info = parse_tex(data)
-        rgba = tex_pixels(data, info)
+        info = parse_tex_any(data)
+        rgba = tex_pixels_any(data, info)
         meta = {
             "format": info.fmt, "mip_count": info.mip_count, "tex": True,
             "content_sha": hashlib.sha256(data).hexdigest(),
@@ -99,8 +219,8 @@ class MtfTexCodec:
         return [TextureItem(path, None, self.name, rgba, meta)]
 
     def encode_file(self, path: Path, replacements: dict[str, np.ndarray]) -> bytes:
-        info = parse_tex(path.read_bytes())
-        return build_tex(info, replacements[""])
+        info = parse_tex_any(path.read_bytes())
+        return build_tex_any(info, replacements[""])
 
 
 # ARC container codec
@@ -192,10 +312,10 @@ class MtfArcCodec:
             comp_blob = data[e.offset : e.offset + e.comp_size]
             raw = zlib.decompress(comp_blob)
             try:
-                info = parse_tex(raw)
+                info = parse_tex_any(raw)
             except UnsupportedTexture:
                 continue  # кубмапы и прочее — пропуск
-            rgba = tex_pixels(raw, info)
+            rgba = tex_pixels_any(raw, info)
             meta = {
                 "format": info.fmt, "mip_count": info.mip_count, "tex": True, "arc_entry": e.name,
                 # sha256 of the COMPRESSED entry blob (cheap, unique per content, avoids
@@ -215,7 +335,7 @@ class MtfArcCodec:
             quality[i] = e.quality
             if e.type_hash == ARC_TEXTURE_HASH and e.name in replacements:
                 raw = zlib.decompress(comp)
-                new_raw = build_tex(parse_tex(raw), replacements[e.name])
+                new_raw = build_tex_any(parse_tex_any(raw), replacements[e.name])
                 out_entries.append((e.name, e.type_hash, new_raw))
             else:
                 out_entries.append((e.name, e.type_hash, b""))
