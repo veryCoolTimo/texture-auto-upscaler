@@ -38,24 +38,18 @@ git clone git@github.com:veryCoolTimo/texture-auto-upscaler.git
 cd texture-auto-upscaler
 python3 -m venv .venv && .venv/bin/pip install -e .
 
-# 1. scan the game
-.venv/bin/texup scan "/path/to/GameFolder" --out ./out
-
-# 2. try a sample first: 5 textures per class + before/after sheets
-.venv/bin/texup upscale ./out --sample 5 --compare
-open ./out/_compare
-
-# 3. happy? run the whole thing (resumable — Ctrl+C safe)
-.venv/bin/texup upscale ./out
-
-# 4. into the game (originals backed up automatically)
-.venv/bin/texup apply ./out
-
-# changed your mind?
-.venv/bin/texup rollback "/path/to/GameFolder"
+.venv/bin/texup remaster "/path/to/GameFolder"
 ```
 
-Models download automatically on first use (~130 MB) into `~/.cache/texup/models/`.
+That's the whole workflow: texup scans the game, shows what it found (engine, texture classes, duplicates), asks two questions — quality mode with a time estimate **for your hardware**, and whether to write into the game (with automatic backup) or an output folder — then runs silently with a progress bar and ETA. Interrupt any time; it resumes where it left off. Models download automatically on first use (~130 MB).
+
+| Command | What it does |
+|---|---|
+| `texup remaster <game>` | the one command: scan → 2 questions → run → report |
+| `texup bench` | ~1-min hardware calibration that powers the time estimates |
+| `texup scan / upscale / apply / rollback / status / preview` | the individual steps, for scripting |
+
+Changed your mind after applying? `texup rollback "/path/to/GameFolder"` restores everything.
 
 ## Supported games
 
@@ -94,13 +88,16 @@ A real 2009 game is ~36,000 textures. Naively that's a day and a half of GPU tim
 
 ## Choosing the look
 
-`--compare` writes side-by-side sheets so you decide with your eyes, not metrics. The default diffuse model is [Remacri](https://openmodeldb.info/models/4x-foolhardy-Remacri) — the community favourite for texture packs: it *restores* surface detail (fabric weave, rust grain) instead of just sharpening. Swap models per class in `texup/router.py` — anything from [OpenModelDB](https://openmodeldb.info/) works.
+Two quality modes, each shown with a time estimate calibrated to your machine:
+
+- **Faithful** — Real-ESRGAN: clean and conservative, closest to the original.
+- **Detailed** (default) — [Remacri](https://openmodeldb.info/models/4x-foolhardy-Remacri), the community favourite for texture packs: it *restores* surface detail (fabric weave, rust grain) instead of just sharpening.
+
+Every run writes side-by-side comparison sheets to `_compare/` so you judge with your eyes, not metrics. Anything from [OpenModelDB](https://openmodeldb.info/) can be wired in via `texup/models.py` + `texup/presets.py`.
 
 ## Roadmap (v2 — in development)
 
-- `texup remaster` — one command: scan → a couple of questions → silent run with progress bar and ETA
-- `texup bench` — hardware calibration for honest time estimates
-- More engine codecs: ZIP-based paks (PK3/PK4), Source (VTF/VPK), Bethesda (BSA/BA2)
+- More engine codecs: Source (VTF/VPK), Bethesda (BSA/BA2)
 - Claude Code skill — drive texup conversationally, no terminal knowledge needed
 - Diffusion "hero mode" — one-step diffusion SR for handpicked environment textures
 - Cubemap support for MT Framework
