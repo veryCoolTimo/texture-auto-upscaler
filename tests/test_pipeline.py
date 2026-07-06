@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from texup.codecs.mtframework import ARC_TEXTURE_HASH, MtfArcCodec, TexInfo, build_arc, build_tex
 from texup.engine import Upscaler
 from texup.pipeline import process
 from texup.scan import scan_game
@@ -82,9 +83,15 @@ def test_dedupe_cache_skips_duplicate_content(tmp_path):
     real = fake_factory("remacri")
 
     class CountingUpscaler:
+        tile_size = 512
+
         def run(self, rgba, max_size=4096):
             run_calls["n"] += 1
             return real.run(rgba, max_size=max_size)
+
+        def run_batch(self, rgbas, max_size=4096):
+            run_calls["n"] += 1
+            return real.run_batch(rgbas, max_size=max_size)
 
     def counting_factory(model_name: str):
         return CountingUpscaler()
@@ -149,3 +156,83 @@ def test_encode_failure_then_next_source_still_processes(tmp_path, monkeypatch):
     assert (out / "tex1_d.png").exists()
     assert (out / "wall_n.png").exists()
     assert not (out / "tex0_d.png").exists()
+
+
+def _tex_info() -> TexInfo:
+    return TexInfo(112, 2, 1, 1, 8, 8, 0, "RGBA8", b"\x00" * 16)
+
+
+def test_batches_same_size_textures_in_one_source(tmp_path):
+    # Five distinct-content, same-size textures packed into a single ARC "source"
+    # (the real-world shape of a game archive with many small mask/UI textures).
+    rng = np.random.default_rng(1)
+    entries = []
+    for i in range(5):
+        rgba = rng.integers(0, 255, (8, 8, 4), dtype=np.uint8)
+        rgba[..., 3] = 255
+        entries.append((f"tex{i}", ARC_TEXTURE_HASH, build_tex(_tex_info(), rgba)))
+    blob = build_arc(7, entries)
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "pack.arc").write_bytes(blob)
+    out = tmp_path / "out"
+    prj = scan_game(game, out)
+
+    calls = {"n": 0}
+
+    class CountingFake4x(Fake4x):
+        def forward(self, x):
+            calls["n"] += 1
+            return super().forward(x)
+
+    def counting_factory(model_name: str) -> Upscaler:
+        return Upscaler(CountingFake4x(), scale=4, device="cpu")
+
+    stats = process(prj, out, engine_factory=counting_factory)
+    assert stats["done"] == 5
+    assert calls["n"] < 5  # batched into fewer forward passes than textures
+
+    out_items = MtfArcCodec().decode(out / "pack.arc")
+    assert len(out_items) == 5
+    for it in out_items:
+        assert it.pixels.shape == (32, 32, 4)
+
+
+def test_batch_post_hook_failure_isolated_from_siblings(tmp_path, monkeypatch):
+    base = np.zeros((8, 8, 4), dtype=np.uint8)
+    base[..., 2] = 255  # flat "pointing up" normal map (z=255)
+    base[..., 3] = 255
+    bad = base.copy()
+    bad[0, 0, 0] = 123  # sentinel: post-hook raises when it sees this
+    other = base.copy()
+    other[7, 7, 1] = 5  # distinct content_sha, but no sentinel
+
+    entries = [
+        ("tex0_n", ARC_TEXTURE_HASH, build_tex(_tex_info(), base)),
+        ("tex1_n", ARC_TEXTURE_HASH, build_tex(_tex_info(), bad)),
+        ("tex2_n", ARC_TEXTURE_HASH, build_tex(_tex_info(), other)),
+    ]
+    blob = build_arc(7, entries)
+    game = tmp_path / "game"
+    game.mkdir()
+    (game / "pack.arc").write_bytes(blob)
+    out = tmp_path / "out"
+    prj = scan_game(game, out)
+
+    import texup.router as router_mod
+    original_renormalize = router_mod.renormalize
+
+    def flaky_renormalize(rgba):
+        if rgba[0, 0, 0] == 123:
+            raise RuntimeError("boom")
+        return original_renormalize(rgba)
+
+    monkeypatch.setattr(router_mod, "renormalize", flaky_renormalize)
+
+    stats = process(prj, out, engine_factory=fake_factory)
+    assert stats["failed"] == 1
+    assert stats["done"] == 2
+
+    failed = prj.records(status="failed")
+    assert len(failed) == 1
+    assert failed[0]["key"].endswith("tex1_n")

@@ -61,30 +61,39 @@ class Upscaler:
                 elif self.device == "cuda":
                     torch.cuda.empty_cache()
 
-    def _forward(self, rgb: np.ndarray, fp16: bool) -> np.ndarray:
+    def _forward_batch(self, rgb_list: list[np.ndarray], fp16: bool) -> np.ndarray:
         dtype = torch.float16 if fp16 else torch.float32
-        t = torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(2, 0, 1)[None].to(
-            self.device, dtype=dtype
-        )
+        arr = np.stack([r.astype(np.float32) / 255.0 for r in rgb_list])
+        t = torch.from_numpy(arr).permute(0, 3, 1, 2).to(self.device, dtype=dtype)
         out = self.model(t)
-        return out.float().clamp(0, 1)[0].permute(1, 2, 0).cpu().numpy()
+        return out.float().clamp(0, 1).permute(0, 2, 3, 1).cpu().numpy()
+
+    def _forward(self, rgb: np.ndarray, fp16: bool) -> np.ndarray:
+        return self._forward_batch([rgb], fp16)[0]
+
+    @staticmethod
+    def _is_degenerate(out: np.ndarray, input_was_nonzero: bool) -> bool:
+        return bool(np.isnan(out).any() or (input_was_nonzero and not np.any(out)))
 
     def _infer(self, rgb: np.ndarray) -> np.ndarray:
         out = self._forward(rgb, self.use_fp16)
-        if self.use_fp16:
-            input_was_zero = not np.any(rgb)
-            degenerate = np.isnan(out).any() or (not input_was_zero and not np.any(out))
-            if degenerate:
-                # fp16 produced garbage on this hardware/model combo — fall back to fp32
-                # permanently for the rest of this Upscaler's lifetime, and redo this tile.
-                self.model = self.model.float()
-                self.use_fp16 = False
-                out = self._forward(rgb, False)
+        if self.use_fp16 and self._is_degenerate(out, bool(np.any(rgb))):
+            # fp16 produced garbage on this hardware/model combo — fall back to fp32
+            # permanently for the rest of this Upscaler's lifetime, and redo this tile.
+            self.model = self.model.float()
+            self.use_fp16 = False
+            out = self._forward(rgb, False)
         return (out * 255.0 + 0.5).astype(np.uint8)
 
-    def run(self, rgba: np.ndarray, max_size: int = 4096) -> np.ndarray:
-        rgb_up = self._run_rgb(rgba[..., :3])
-        alpha = rgba[..., 3]
+    def _infer_batch(self, rgb_list: list[np.ndarray]) -> list[np.ndarray]:
+        out = self._forward_batch(rgb_list, self.use_fp16)
+        if self.use_fp16 and self._is_degenerate(out, any(np.any(r) for r in rgb_list)):
+            self.model = self.model.float()
+            self.use_fp16 = False
+            out = self._forward_batch(rgb_list, False)
+        return [(o * 255.0 + 0.5).astype(np.uint8) for o in out]
+
+    def _finish(self, rgb_up: np.ndarray, alpha: np.ndarray, max_size: int) -> np.ndarray:
         h, w = rgb_up.shape[:2]
         if np.all(alpha == alpha.flat[0]):
             a_up = np.full((h, w), alpha.flat[0], dtype=np.uint8)
@@ -101,6 +110,34 @@ class Upscaler:
             nw, nh = max(1, round(w * k)), max(1, round(h * k))
             out = np.asarray(Image.fromarray(out, "RGBA").resize((nw, nh), Image.LANCZOS))
         return out
+
+    def run(self, rgba: np.ndarray, max_size: int = 4096) -> np.ndarray:
+        rgb_up = self._run_rgb(rgba[..., :3])
+        return self._finish(rgb_up, rgba[..., 3], max_size)
+
+    @torch.inference_mode()
+    def run_batch(self, rgbas: list[np.ndarray], max_size: int = 4096) -> list[np.ndarray]:
+        """Batch same-(H,W) textures through a single forward pass.
+
+        Precondition: caller guarantees every item has the same (H, W) and that
+        H, W <= self.tile_size (no tiling needed).
+        """
+        if not rgbas:
+            return []
+        try:
+            rgb_ups = self._infer_batch([rgba[..., :3] for rgba in rgbas])
+        except RuntimeError as e:  # OOM: fall back to processing items one at a time
+            if "memory" not in str(e).lower():
+                raise
+            if self.device == "mps":
+                torch.mps.empty_cache()
+            elif self.device == "cuda":
+                torch.cuda.empty_cache()
+            return [self.run(rgba, max_size=max_size) for rgba in rgbas]
+        return [
+            self._finish(rgb_up, rgba[..., 3], max_size)
+            for rgb_up, rgba in zip(rgb_ups, rgbas)
+        ]
 
 
 def load_upscaler(model_name: str, device: str | None = None) -> Upscaler:

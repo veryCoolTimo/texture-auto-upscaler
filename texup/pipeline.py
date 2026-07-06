@@ -34,6 +34,10 @@ def _cache_path(cache_dir: Path, content_sha: str, model: str | None, max_size: 
     return cache_dir / f"{content_sha}-{model or 'classic'}-{max_size}.png"
 
 
+# Small same-size textures sharing a model get stacked into one GPU forward pass.
+BATCH = 8
+
+
 def _finalize_source(codec, src: Path, game_dir: Path, out_dir: Path,
                       replacements: dict[str, np.ndarray], provisional: list[dict],
                       compare: bool) -> None:
@@ -110,6 +114,24 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
 
             replacements: dict[str, np.ndarray] = {}
             provisional: list[dict] = []
+
+            def _record_result(r: dict, inner: str, item, route, up: np.ndarray,
+                                cache_file: Path | None, fresh: bool) -> None:
+                if fresh and cache_file is not None:
+                    mem_cache[cache_file] = up
+                replacements[inner] = up
+                provisional.append({
+                    "key": r["key"],
+                    "model": route.model,
+                    "klass": r["klass"],
+                    "up": up,
+                    "before": item.pixels if compare else None,
+                    "cache_file": cache_file if fresh else None,
+                })
+
+            # Items eligible for batching (same model, fit in one tile, no cache hit)
+            # are deferred here and processed together after this pass.
+            batch_groups: dict[tuple[str, int, int], list[dict]] = defaultdict(list)
             for r in recs:
                 _, inner = Project.source_of(r["key"])
                 try:
@@ -120,39 +142,59 @@ def process(prj: Project, out_dir: Path, *, only: list[str] | None = None,
                         _cache_path(cache_dir, content_sha, route.model, max_size)
                         if content_sha else None
                     )
-                    fresh = False
                     if cache_file is not None and cache_file in mem_cache:
-                        up = mem_cache[cache_file]
+                        _record_result(r, inner, item, route, mem_cache[cache_file], cache_file, False)
                     elif cache_file is not None and cache_file.exists():
                         up = np.asarray(Image.open(cache_file).convert("RGBA"))
                         mem_cache[cache_file] = up
+                        _record_result(r, inner, item, route, up, cache_file, False)
+                    elif route.model is None:
+                        up = resize_classic(item.pixels, 4)
+                        _record_result(r, inner, item, route, up, cache_file, cache_file is not None)
                     else:
-                        px = item.pixels
-                        if route.pre:
-                            px = route.pre(px)
-                        if route.model is None:
-                            up = resize_classic(px, 4)
+                        if route.model not in engines:
+                            engines[route.model] = engine_factory(route.model)
+                        engine = engines[route.model]
+                        px = route.pre(item.pixels) if route.pre else item.pixels
+                        h, w = px.shape[:2]
+                        if max(h, w) <= engine.tile_size:
+                            batch_groups[(route.model, w, h)].append({
+                                "r": r, "inner": inner, "item": item, "route": route,
+                                "px": px, "cache_file": cache_file,
+                            })
                         else:
-                            if route.model not in engines:
-                                engines[route.model] = engine_factory(route.model)
-                            up = engines[route.model].run(px, max_size=max_size)
-                        if route.post:
-                            up = route.post(up)
-                        if cache_file is not None:
-                            mem_cache[cache_file] = up
-                            fresh = True
-                    replacements[inner] = up
-                    provisional.append({
-                        "key": r["key"],
-                        "model": route.model,
-                        "klass": r["klass"],
-                        "up": up,
-                        "before": item.pixels if compare else None,
-                        "cache_file": cache_file if fresh else None,
-                    })
+                            up = engine.run(px, max_size=max_size)
+                            if route.post:
+                                up = route.post(up)
+                            _record_result(r, inner, item, route, up, cache_file, cache_file is not None)
                 except Exception as e:  # noqa: BLE001
                     prj.set_status(r["key"], "failed", reason=str(e))
                     stats["failed"] += 1
+
+            for key in sorted(batch_groups):
+                entries = batch_groups[key]
+                engine = engines[key[0]]
+                for i in range(0, len(entries), BATCH):
+                    chunk = entries[i : i + BATCH]
+                    try:
+                        ups = engine.run_batch([c["px"] for c in chunk], max_size=max_size)
+                    except Exception as e:  # noqa: BLE001
+                        for c in chunk:
+                            prj.set_status(c["r"]["key"], "failed", reason=str(e))
+                            stats["failed"] += 1
+                        continue
+                    for c, up in zip(chunk, ups):
+                        try:
+                            route = c["route"]
+                            if route.post:
+                                up = route.post(up)
+                            _record_result(
+                                c["r"], c["inner"], c["item"], route, up,
+                                c["cache_file"], c["cache_file"] is not None,
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            prj.set_status(c["r"]["key"], "failed", reason=str(e))
+                            stats["failed"] += 1
 
             if replacements:
                 # Surface the previous source's finalize errors before handing off

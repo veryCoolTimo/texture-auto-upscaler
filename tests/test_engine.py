@@ -122,3 +122,49 @@ def test_mps_fp16_smoke_no_nan():
     out = up.run(_rgba(16, 16))
     assert out.dtype == np.uint8
     assert not np.isnan(out.astype(np.float32)).any()
+
+
+def test_run_batch_matches_individual_run():
+    up = Upscaler(Fake4x(), scale=4, device="cpu")
+    imgs = [_rgba(16, 16) for _ in range(3)]
+    # give each a distinct pixel pattern so a batch mix-up would be caught
+    for i, img in enumerate(imgs):
+        img[0, 0, 0] = i * 40
+
+    batched = up.run_batch(imgs)
+    individual = [up.run(img) for img in imgs]
+    assert len(batched) == 3
+    for b, i in zip(batched, individual):
+        assert np.array_equal(b, i)
+
+
+def test_run_batch_constant_and_varying_alpha():
+    up = Upscaler(Fake4x(), scale=4, device="cpu")
+    const = _rgba(16, 16)
+    const[..., 3] = 200
+    varying = _rgba(16, 16)
+    varying[..., 3] = np.linspace(0, 255, 256).reshape(16, 16).astype(np.uint8)
+
+    out_const, out_varying = up.run_batch([const, varying])
+    assert np.all(out_const[..., 3] == 200)
+    assert out_varying[0, 0, 3] < out_varying[-1, -1, 3]
+
+
+def test_run_batch_empty_list():
+    up = Upscaler(Fake4x(), scale=4, device="cpu")
+    assert up.run_batch([]) == []
+
+
+def test_run_batch_oom_falls_back_to_individual_run():
+    class _OomOnBatch(torch.nn.Module):
+        def forward(self, x):
+            if x.shape[0] > 1:
+                raise RuntimeError("CUDA out of memory")
+            return torch.nn.functional.interpolate(x, scale_factor=4, mode="nearest")
+
+    up = Upscaler(_OomOnBatch(), scale=4, device="cpu")
+    imgs = [_rgba(16, 16) for _ in range(3)]
+    out = up.run_batch(imgs)
+    assert len(out) == 3
+    for o in out:
+        assert o.shape == (64, 64, 4)
