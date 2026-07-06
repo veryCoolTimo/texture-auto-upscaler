@@ -30,12 +30,14 @@ class Project:
         return cls(Path(data["game_dir"]), out_dir, data["textures"])
 
     def add_texture(self, key: str, *, codec: str, klass: str, confidence: float,
-                    sha256: str, width: int, height: int, fmt: str) -> None:
+                    sha256: str, width: int, height: int, fmt: str, content_sha: str | None = None) -> None:
         self._textures[key] = {
             "key": key, "codec": codec, "klass": klass, "confidence": round(confidence, 3),
             "sha256": sha256, "width": width, "height": height, "fmt": fmt,
             "status": "pending", "reason": None, "model": None,
         }
+        if content_sha is not None:
+            self._textures[key]["content_sha"] = content_sha
 
     def set_status(self, key: str, status: str, *, reason: str | None = None,
                    model: str | None = None) -> None:

@@ -34,6 +34,7 @@ def scan_game(game_dir: Path, out_dir: Path) -> Project:
             prj.add_texture(item.key, codec=codec.name, klass=c.klass,
                             confidence=c.confidence, sha256=sha,
                             width=item.width, height=item.height,
-                            fmt=item.meta.get("format", "?"))
+                            fmt=item.meta.get("format", "?"),
+                            content_sha=item.meta.get("content_sha"))
     prj.save()
     return prj

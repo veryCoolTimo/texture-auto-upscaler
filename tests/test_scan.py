@@ -49,3 +49,13 @@ def test_rescan_backs_up_previous_manifest(tmp_path):
     first = (out / "texup-project.json").read_text()
     scan_game(game, out)
     assert (out / "texup-project.json.bak").read_text() == first
+
+
+def test_scan_writes_content_sha_to_records(tmp_path):
+    game = _make_game(tmp_path)
+    prj = scan_game(game, tmp_path / "out")
+    recs = {r["key"]: r for r in prj.records()}
+    # PNG files should have content_sha in records
+    for key, rec in recs.items():
+        if rec["status"] == "pending":
+            assert "content_sha" in rec, f"content_sha missing for {key}"
