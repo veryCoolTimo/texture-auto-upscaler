@@ -62,7 +62,7 @@ texup is format-driven, not game-driven: any game whose textures it can decode, 
 | **Dragon's Dogma, DMC4, Lost Planet** | same MT Framework formats | ✅ expected to work |
 | **Quake III, Doom 3, RTCW** and other id-Tech era games | ZIP-based paks (PK3/PK4) | ✅ |
 | **Half-Life 2, Portal, CS:S, L4D, TF2** and Source mods | VTF textures, VPK read → loose mod output | ✅ cross-validated vs srctools |
-| **Skyrim, Fallout 4** | Bethesda BSA/BA2 | 🔜 v2 |
+| **Skyrim, Fallout 4** and Bethesda mods | BSA / BA2 read → loose mod output | ✅ cross-validated vs bethesda-structs |
 
 Verification standard: every codec is validated against a full real installation before it's called supported — RE5: 645/645 loose textures byte-exact, 1231/1232 archives repack byte-identical; RE0 HD: 10,454 textures parse with exact size match. Codecs are plugins — a new engine is one file implementing `detect / decode / encode_file`.
 
@@ -95,9 +95,8 @@ Two quality modes, each shown with a time estimate calibrated to your machine:
 
 Every run writes side-by-side comparison sheets to `_compare/` so you judge with your eyes, not metrics. Anything from [OpenModelDB](https://openmodeldb.info/) can be wired in via `texup/models.py` + `texup/presets.py`.
 
-## Roadmap (v2 — in development)
+## Roadmap
 
-- Bethesda codec: BSA/BA2 (Skyrim, Fallout 4)
 - Claude Code skill — drive texup conversationally, no terminal knowledge needed
 - Diffusion "hero mode" — one-step diffusion SR for handpicked environment textures
 - Cubemap support for MT Framework
