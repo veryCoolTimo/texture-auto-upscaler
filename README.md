@@ -61,13 +61,13 @@ Models download automatically on first use (~130 MB) into `~/.cache/texup/models
 
 | Layer | Support |
 |---|---|
-| Image formats | PNG, JPG, TGA, BMP, DDS (BC1/DXT1, BC2/DXT3, BC3/DXT5, BC5, uncompressed) |
-| Game engines | MT Framework (Resident Evil 5): `.tex` textures + `.arc` archives, byte-identical repack |
+| Image formats | PNG, JPG, TGA, BMP, DDS (BC1/DXT1, BC2/DXT3, BC3/DXT5, BC5, BC7, uncompressed) |
+| Game engines | MT Framework **v1** (Resident Evil 5) and **v2** (Resident Evil 0 HD): `.tex` textures + `.arc` archives, byte-identical repack. Other MT Framework titles (RE6, Dragon's Dogma, DMC4, Lost Planet) share these formats and should work — verification in progress |
 | Texture classes | diffuse / albedo, normal maps (incl. DXT5nm AG-swizzle), material masks, UI, font atlases |
 | Hardware | Apple Silicon (MPS, fp16), NVIDIA (CUDA), CPU fallback |
 | Models | anything [spandrel](https://github.com/chaiNNer-org/spandrel) loads — the registry ships Remacri, Real-ESRGAN x4plus and a BC-aware normal-map model |
 
-Codecs are plugins: a new engine is one file implementing `detect / decode / encode_file`. The MT Framework codec was reverse-engineered and verified against every file of a real installation — 645/645 loose textures parse byte-exact, 1231/1232 archives repack byte-identical.
+Codecs are plugins: a new engine is one file implementing `detect / decode / encode_file`. Both MT Framework generations were reverse-engineered and verified against full real installations: RE5 — 645/645 loose textures byte-exact, 1231/1232 archives repack byte-identical; RE0 HD — 10,454 textures parse with exact size match (99%, the rest are cubemaps, safely skipped).
 
 ## Built for real scale
 
@@ -85,12 +85,14 @@ A real 2009 game is ~36,000 textures. Naively that's a day and a half of GPU tim
 
 `--compare` writes side-by-side sheets so you decide with your eyes, not metrics. The default diffuse model is [Remacri](https://openmodeldb.info/models/4x-foolhardy-Remacri) — the community favourite for texture packs: it *restores* surface detail (fabric weave, rust grain) instead of just sharpening. Swap models per class in `texup/router.py` — anything from [OpenModelDB](https://openmodeldb.info/) works.
 
-## Roadmap
+## Roadmap (v2 — in development)
 
-- More engine codecs (Source VPK, Bethesda BSA, ZIP-based paks)
-- Diffusion "hero mode" — one-step diffusion SR (AdcSR-class) for handpicked environment textures
+- `texup remaster` — one command: scan → a couple of questions → silent run with progress bar and ETA
+- `texup bench` — hardware calibration for honest time estimates
+- More engine codecs: ZIP-based paks (PK3/PK4), Source (VTF/VPK), Bethesda (BSA/BA2)
+- Claude Code skill — drive texup conversationally, no terminal knowledge needed
+- Diffusion "hero mode" — one-step diffusion SR for handpicked environment textures
 - Cubemap support for MT Framework
-- GUI wrapper
 
 ## Fair use
 
