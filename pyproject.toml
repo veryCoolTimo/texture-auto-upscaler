@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "srctools>=2.5"]
 
 [project.scripts]
 texup = "texup.cli:app"
