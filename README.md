@@ -68,10 +68,10 @@ Verification standard: every codec is validated against a full real installation
 
 ## Use with Claude Code
 
-Don't want to touch a terminal? Install the skill and just say *"remaster the textures in my game"* — Claude runs texup for you, shows you the before/after sheets, and applies (with backup) once you approve:
+Don't want to touch a terminal? The [**texup-claude-skill**](https://github.com/veryCoolTimo/texup-claude-skill) plugin lets you just say *"remaster the textures in my game"* — Claude runs texup for you, shows you the before/after sheets, and applies (with backup) once you approve:
 
 ```
-/plugin marketplace add veryCoolTimo/texture-auto-upscaler
+/plugin marketplace add veryCoolTimo/texup-claude-skill
 /plugin install texup-skill@texup
 ```
 
